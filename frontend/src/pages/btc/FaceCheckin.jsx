@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Camera, CameraOff, CircleCheck, CircleX, RotateCw, ScanFace, UserCheck } from 'lucide-react';
+import { ArrowLeft, Camera, CameraOff, CircleCheck, CircleX, RotateCw, ScanFace, Undo2, UserCheck } from 'lucide-react';
 import { format } from 'date-fns';
 import { eventApi, faceApi } from '../../services/api';
-import Button from '../../components/ui/Button';
+import Button, { IconButton } from '../../components/ui/Button';
+import { useConfirm } from '../../components/ui/Modal';
 import Logo from '../../components/ui/Logo';
 import { Input } from '../../components/ui/Input';
 import { Banner, EmptyText } from '../../components/ui/States';
@@ -32,9 +33,13 @@ export default function FaceCheckin() {
   const [recent, setRecent] = useState([]);
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState('');
+  const confirm = useConfirm();
 
   const peopleRef = useRef([]);
   const doneRef = useRef(new Set()); // đã check-in (từ server hoặc trong phiên này)
+  // Bị BTC gỡ check-in trong phiên này — thường vì kiosk nhận nhầm mặt. Người nhầm có thể vẫn
+  // đứng trước camera, nên với những id này kiosk không tự check-in nữa mà hỏi BTC chọn.
+  const undoneRef = useRef(new Set());
   const streakRef = useRef({ userId: null, count: 0 });
   const greetedRef = useRef(new Map()); // userId → lúc chào gần nhất
   const thumbsRef = useRef(new Map()); // userId → object URL
@@ -104,6 +109,7 @@ export default function FaceCheckin() {
     try {
       const { data: res } = await faceApi.checkIn(id, person.userId);
       doneRef.current.add(person.userId);
+      undoneRef.current.delete(person.userId);
       greet({ tone: 'ok', title: `Xin chào ${person.name}!`, sub: person.mssv, thumb });
       setRecent((r) => [{ ...person, thumb, at: res.data.checkinTime }, ...r].slice(0, 30));
     } catch (err) {
@@ -150,7 +156,7 @@ export default function FaceCheckin() {
     const lastGreet = greetedRef.current.get(person.userId) || 0;
     if (Date.now() - lastGreet < REGREET_MS) return;
 
-    if (decision === 'AUTO') {
+    if (decision === 'AUTO' && !undoneRef.current.has(person.userId)) {
       setHint('');
       if (doneRef.current.has(person.userId)) {
         greetedRef.current.set(person.userId, Date.now());
@@ -189,6 +195,25 @@ export default function FaceCheckin() {
     // Bỏ qua: không chào lại ứng viên vừa bị từ chối ngay khung sau.
     candidates?.forEach((c) => greetedRef.current.set(c.person.userId, Date.now()));
     setCandidates(null);
+  };
+
+  const undoRecent = async (r) => {
+    if (!(await confirm({
+      title: 'Gỡ lượt check-in?',
+      body: <><span className="font-medium text-foreground">{r.name}</span> sẽ trở về trạng thái “Đã đăng ký”. Dùng khi kiosk nhận nhầm người.</>,
+      confirmLabel: 'Gỡ check-in',
+      icon: Undo2,
+    }))) return;
+    try {
+      await eventApi.undoCheckin(id, r.userId);
+      doneRef.current.delete(r.userId);
+      undoneRef.current.add(r.userId);
+      greetedRef.current.set(r.userId, Date.now());
+      setRecent((list) => list.filter((x) => x.userId !== r.userId));
+      greet({ tone: 'already', title: 'Đã gỡ check-in', sub: r.name, thumb: r.thumb });
+    } catch (err) {
+      greet({ tone: 'error', title: r.name, sub: err?.response?.data?.message || 'Không gỡ được check-in' });
+    }
   };
 
   const submitManual = async (e) => {
@@ -343,6 +368,7 @@ export default function FaceCheckin() {
                           <span className="block text-xs tabular-nums text-muted">{r.mssv}</span>
                         </span>
                         <span className="text-xs tabular-nums text-muted">{format(new Date(r.at), 'HH:mm')}</span>
+                        <IconButton icon={Undo2} label={`Gỡ check-in của ${r.name}`} danger onClick={() => undoRecent(r)} />
                       </li>
                     ))}
                   </ul>

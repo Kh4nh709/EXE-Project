@@ -2,7 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const {
   listEvents, createEvent, getEvent, updateEvent, deleteEvent,
-  getQRToken, getLiveCheckins, getAttendance, manualCheckin,
+  getQRToken, getLiveCheckins, getAttendance, manualCheckin, undoCheckin,
   listMembers, addMembers, removeMember, searchUsersForEvent,
   listClasses, addMembersByClass,
 } = require('../controllers/event.controller');
@@ -52,6 +52,8 @@ router.get('/:id/qr', authorize('ADMIN', 'BTC'), getQRToken);
 router.get('/:id/live', authorize('ADMIN', 'BTC'), getLiveCheckins);
 router.get('/:id/attendance', authorize('ADMIN', 'BTC', 'LECTURER'), getAttendance);
 router.post('/:id/manual-checkin', authorize('ADMIN', 'BTC'), manualCheckin);
+// Gỡ lượt check-in của một người — đưa về REGISTERED, không xoá khỏi danh sách.
+router.delete('/:id/attendance/:userId/checkin', authorize('ADMIN', 'BTC'), undoCheckin);
 // Kiosk check-in bằng khuôn mặt: vector do trình duyệt so khớp, xem lib/faceProfile.js.
 router.get('/:id/face-gallery', authorize('ADMIN', 'BTC'), getFaceGallery);
 router.get('/:id/face-gallery/:userId/thumbnail', authorize('ADMIN', 'BTC'), getFaceThumbnail);

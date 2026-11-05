@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import {
-  Ellipsis, FileCode2, FileSpreadsheet, FileText, Link2, Pencil, QrCode, ScanFace, UserCheck, Users,
+  Ellipsis, FileCode2, FileSpreadsheet, FileText, Link2, Pencil, QrCode, ScanFace, Undo2, UserCheck, Users,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { eventApi, reportApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import Layout from '../../components/layout/Layout';
-import Button, { OutlineIconButton } from '../../components/ui/Button';
+import Button, { IconButton, OutlineIconButton } from '../../components/ui/Button';
 import { AttendanceBadge, PhaseBadge } from '../../components/ui/Badge';
-import Modal from '../../components/ui/Modal';
+import Modal, { useConfirm } from '../../components/ui/Modal';
 import Tabs from '../../components/ui/Tabs';
 import Select from '../../components/ui/Select';
 import Pagination from '../../components/ui/Pagination';
@@ -43,6 +43,7 @@ const STATUS_OPTIONS = [
 export default function EventDetail() {
   const { id } = useParams();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
   const [event, setEvent] = useState(null);
   const [attendances, setAttendances] = useState([]);
@@ -196,6 +197,34 @@ export default function EventDetail() {
       toast.error(err.response?.data?.message || 'Thất bại');
     }
   };
+
+  // Gỡ nhầm lượt check-in (bấm nhầm, kiosk nhận nhầm mặt, quét hộ): người đó về "Đã đăng ký"
+  // và có thể check-in lại. Server giữ nguyên dòng điểm danh, chỉ xoá giờ vào/ra.
+  const handleUndoCheckin = async (att) => {
+    if (!(await confirm({
+      title: 'Gỡ lượt check-in?',
+      body: (
+        <>
+          <span className="font-medium text-foreground">{att.user.name}</span> sẽ trở về trạng thái “Đã đăng ký”
+          {att.checkoutTime ? ', lượt check-out cũng bị gỡ' : ''}. Người này có thể check-in lại.
+        </>
+      ),
+      confirmLabel: 'Gỡ check-in',
+      icon: Undo2,
+    }))) return;
+    try {
+      await eventApi.undoCheckin(id, att.userId || att.user.id);
+      toast.success(`Đã gỡ check-in của ${att.user.name}`);
+      loadAttendance(page);
+      reloadEvent();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Gỡ check-in thất bại');
+    }
+  };
+
+  const undoButton = (att) => (canProject && att.checkinTime ? (
+    <IconButton icon={Undo2} label={`Gỡ check-in của ${att.user.name}`} danger row onClick={() => handleUndoCheckin(att)} />
+  ) : null);
 
   const shell = (content) => (
     <Layout parent={{ label: 'Sự kiện', to: '/events' }} activeNav="/events">{content}</Layout>
@@ -369,6 +398,7 @@ export default function EventDetail() {
                     <Th>Check-in</Th>
                     <Th>Check-out</Th>
                     <Th>Trạng thái</Th>
+                    {canProject && <th className="w-px px-2"><span className="sr-only">Thao tác</span></th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -386,6 +416,7 @@ export default function EventDetail() {
                         {att.checkoutTime ? format(new Date(att.checkoutTime), 'HH:mm:ss') : '—'}
                       </td>
                       <td className="px-4 py-3"><AttendanceBadge status={att.status} /></td>
+                      {canProject && <td className="px-2 py-3">{undoButton(att)}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -400,7 +431,10 @@ export default function EventDetail() {
                           {att.user.mssv || att.user.email}{att.user.class ? ` · ${att.user.class}` : ''}
                         </p>
                       </div>
-                      <AttendanceBadge status={att.status} />
+                      <div className="flex shrink-0 items-center gap-1">
+                        <AttendanceBadge status={att.status} />
+                        {undoButton(att)}
+                      </div>
                     </div>
                     {att.checkinTime && (
                       <p className="mt-1 text-xs tabular-nums text-muted">

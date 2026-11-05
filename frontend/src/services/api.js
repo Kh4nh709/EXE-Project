@@ -78,6 +78,8 @@ export const eventApi = {
   getLive: (id) => api.get(`/api/events/${id}/live`),
   getAttendance: (id, params) => api.get(`/api/events/${id}/attendance`, { params }),
   manualCheckin: (id, data) => api.post(`/api/events/${id}/manual-checkin`, data),
+  // Gỡ lượt check-in (kèm check-out) của một người — về lại "Đã đăng ký".
+  undoCheckin: (id, userId) => api.delete(`/api/events/${id}/attendance/${userId}/checkin`),
   listMembers: (id, params) => api.get(`/api/events/${id}/members`, { params }),
   searchMembers: (id, q) => api.get(`/api/events/${id}/members/search`, { params: { q } }),
   addMembers: (id, userIds) => api.post(`/api/events/${id}/members`, { userIds }),

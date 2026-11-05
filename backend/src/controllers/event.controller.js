@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { Prisma } = require('@prisma/client');
 const { generateToken, getExpiresIn } = require('../services/qr.service');
 const { loadEventForWrite } = require('../lib/eventAccess');
 const { addUsersToEvent, removeUserFromEvent } = require('../lib/eventMembership');
@@ -606,6 +607,46 @@ async function manualCheckin(req, res) {
   }
 }
 
+// Gỡ lượt check-in của một người (kiosk nhận nhầm mặt, BTC bấm nhầm, quét hộ bị phát hiện):
+// đưa dòng Attendance về REGISTERED như lúc vừa đăng ký, KHÔNG xoá dòng — xoá thì người đó
+// rớt khỏi bảng điểm danh/export (xem lib/eventMembership.js). Chưa check-in thì không có
+// check-out, nên gỡ check-in là gỡ luôn check-out.
+async function undoCheckin(req, res) {
+  try {
+    const event = await loadEventForWrite(req, res);
+    if (!event) return;
+    if (rejectNonStandardEvent(event, res)) return;
+    const { userId } = req.params;
+
+    // Giấy chứng nhận chỉ cấp cho người đã check-out; gỡ điểm danh mà để nguyên giấy thì
+    // giấy vẫn tra cứu được như thật → bắt thu hồi giấy trước.
+    const certificate = await prisma.certificate.findFirst({ where: { eventId: event.id, userId }, select: { id: true } });
+    if (certificate) {
+      return res.status(409).json({
+        success: false, error: 'CERTIFICATE_ISSUED',
+        message: 'Người này đã được cấp giấy chứng nhận. Hãy thu hồi giấy chứng nhận trước khi gỡ check-in.',
+      });
+    }
+
+    // Điều kiện checkinTime != null nằm trong câu UPDATE: hai BTC cùng bấm gỡ chỉ một lần ghi.
+    const { count } = await prisma.attendance.updateMany({
+      where: { eventId: event.id, userId, checkinTime: { not: null } },
+      data: {
+        checkinTime: null, checkoutTime: null,
+        // Cột Json? phải gán DbNull, gán null thường Prisma báo lỗi.
+        checkinGps: Prisma.DbNull, checkoutGps: Prisma.DbNull,
+        deviceId: null, ip: null, status: 'REGISTERED',
+      },
+    });
+    if (count === 0) {
+      return res.status(400).json({ success: false, error: 'NOT_CHECKED_IN', message: 'Người này chưa check-in.' });
+    }
+    return res.json({ success: true, message: 'Đã gỡ lượt check-in.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
 // ───────────────────────────────────────────────────────────────
 // Quản lý danh sách tham gia (whitelist) theo từng sự kiện
 // ───────────────────────────────────────────────────────────────
@@ -814,7 +855,7 @@ async function searchUsersForEvent(req, res) {
 
 module.exports = {
   listEvents, createEvent, getEvent, updateEvent, deleteEvent,
-  getQRToken, getLiveCheckins, getAttendance, manualCheckin,
+  getQRToken, getLiveCheckins, getAttendance, manualCheckin, undoCheckin,
   listMembers, addMembers, removeMember, searchUsersForEvent,
   listClasses, addMembersByClass,
   rejectNonStandardEvent,

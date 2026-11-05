@@ -146,6 +146,10 @@ scanning; the frontend always sends the ticket when it has one.
 `checkin.controller.processCheckin` validates in fixed order: token → event → whitelist membership
 → gate → GPS (haversine vs `event.radius`) → device binding → attendance upsert. Rejections that
 indicate abuse are written to `FraudLog` via a best-effort `logFraud` that never throws.
+BTC can undo one person's check-in (`DELETE /api/events/:id/attendance/:userId/checkin`, from the
+attendance tab and the face kiosk): the row goes back to `REGISTERED` (never deleted — see
+`eventMembership`), check-out is cleared with it, and it is refused (`CERTIFICATE_ISSUED`) until any
+certificate for that person is revoked.
 
 ### Attendance reports
 `GET /api/reports/events/:id/export` (xlsx) and `/export-html` both go through
