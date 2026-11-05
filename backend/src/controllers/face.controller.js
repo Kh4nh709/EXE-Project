@@ -5,7 +5,7 @@ const { fmtTime } = require('../lib/datetime');
 const {
   FACE_MODEL, SELF_VS_IMPORT_THRESHOLD, MAX_IMPORT_ITEMS,
   similarity, decodeEmbedding, decodeThumbnail, toVector,
-  isActiveProfile, profileStatus, loadProfileVectors, findDuplicateIn, findDuplicate,
+  isActiveProfile, profileStatus, adminProfileData, loadProfileVectors, findDuplicateIn, findDuplicate,
 } = require('../lib/faceProfile');
 const { rejectNonStandardEvent } = require('./event.controller');
 
@@ -91,7 +91,8 @@ async function saveMyFaceProfile(req, res) {
   }
 }
 
-// Đồng ý dùng ảnh nhà trường đã import (ảnh import luôn bắt đầu ở trạng thái chưa đồng ý).
+// Đồng ý dùng ảnh nhà trường đã import. Ảnh admin đặt giờ có hiệu lực ngay; endpoint này còn
+// cho các ảnh import trước đó vẫn đang chờ đồng ý.
 async function consentMyFaceProfile(req, res) {
   try {
     const result = await prisma.faceProfile.updateMany({
@@ -124,6 +125,9 @@ async function deleteMyFaceProfile(req, res) {
 async function importFaceProfiles(req, res) {
   try {
     const items = req.body?.items;
+    // Mặc định không đè ảnh sinh viên tự chụp; admin chủ động tick "ghi đè" khi cần thay
+    // hàng loạt (vd sinh viên tự chụp ảnh mờ, nhà trường cấp ảnh thẻ mới).
+    const overwrite = req.body?.overwrite === true;
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: 'Danh sách ảnh không hợp lệ' });
     }
@@ -153,7 +157,7 @@ async function importFaceProfiles(req, res) {
       const user = byMssv.get(mssv);
       if (!user) { skip('Không tìm thấy sinh viên với MSSV này'); continue; }
       // Sinh viên đã tự chụp và đang dùng — ảnh tự chụp mới hơn ảnh thẻ, đừng ghi đè.
-      if (user.faceProfile?.source === 'SELF' && isActiveProfile(user.faceProfile)) {
+      if (!overwrite && user.faceProfile?.source === 'SELF' && isActiveProfile(user.faceProfile)) {
         skip('Sinh viên đã tự đăng ký khuôn mặt'); continue;
       }
       const embedding = decodeEmbedding(item.embedding);
@@ -164,12 +168,7 @@ async function importFaceProfiles(req, res) {
         skip('Quá giống khuôn mặt của một sinh viên khác'); continue;
       }
 
-      // Ảnh import luôn chờ sinh viên đồng ý, kể cả khi thay ảnh import cũ đã được đồng ý:
-      // họ đồng ý với tấm ảnh đó, không phải tấm này.
-      const data = {
-        embedding: embedding.buffer, importEmbedding: embedding.buffer, thumbnail: thumbnail.buffer,
-        model: FACE_MODEL, source: 'IMPORT', consentAt: null,
-      };
+      const data = adminProfileData(embedding, thumbnail);
       await prisma.faceProfile.upsert({ where: { userId: user.id }, create: { userId: user.id, ...data }, update: data });
       // Ảnh sau trong cùng lô cũng phải so với ảnh vừa ghi.
       const idx = known.findIndex((k) => k.userId === user.id);
@@ -179,6 +178,85 @@ async function importFaceProfiles(req, res) {
     }
 
     return res.json({ success: true, data: { updated, skipped } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
+// ───────────────────────────────────────────────────────────────
+// Admin xem / thay / xoá khuôn mặt của từng người (trang Quản lý người dùng)
+// ───────────────────────────────────────────────────────────────
+
+function adminFaceView(profile) {
+  const status = profileStatus(profile);
+  if (status === 'none') return { status };
+  return {
+    status,
+    source: profile.source,
+    consentAt: profile.consentAt,
+    updatedAt: profile.updatedAt,
+    thumbnail: base64(profile.thumbnail),
+  };
+}
+
+async function getUserFaceProfile(req, res) {
+  try {
+    const profile = await prisma.faceProfile.findUnique({ where: { userId: req.params.id } });
+    return res.json({ success: true, data: adminFaceView(profile) });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
+// Thay ảnh của một người — được đè cả ảnh sinh viên tự chụp, vì đây là admin chủ động
+// chọn đúng người đó. Vẫn chặn mặt trùng tài khoản khác như mọi lần ghi.
+async function setUserFaceProfile(req, res) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, role: true } });
+    if (!user) return res.status(404).json({ success: false, error: 'USER_NOT_FOUND', message: 'Không tìm thấy người dùng' });
+    // Check-in khuôn mặt là cho sinh viên, như import theo MSSV; và chỉ sinh viên vào được
+    // /khuon-mat để tự xem/xoá ảnh của mình.
+    if (user.role !== 'STUDENT') {
+      return res.status(400).json({
+        success: false, error: 'FACE_STUDENT_ONLY',
+        message: 'Chỉ đặt được ảnh khuôn mặt cho tài khoản sinh viên.',
+      });
+    }
+    const embedding = decodeEmbedding(req.body.embedding);
+    if (embedding.error) return res.status(400).json({ success: false, error: 'FACE_INVALID', message: embedding.error });
+    const thumbnail = decodeThumbnail(req.body.thumbnail);
+    if (thumbnail.error) return res.status(400).json({ success: false, error: 'FACE_INVALID', message: thumbnail.error });
+
+    if (await findDuplicate(embedding.vector, user.id)) {
+      return res.status(409).json({
+        success: false, error: 'FACE_DUPLICATE',
+        message: 'Khuôn mặt trong ảnh quá giống khuôn mặt đã đăng ký của một tài khoản khác.',
+      });
+    }
+
+    const data = adminProfileData(embedding, thumbnail);
+    const profile = await prisma.faceProfile.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id, ...data },
+      update: data,
+    });
+    return res.json({
+      success: true,
+      message: 'Đã cập nhật ảnh khuôn mặt. Kiosk dùng ảnh này ngay.',
+      data: adminFaceView(profile),
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
+async function deleteUserFaceProfile(req, res) {
+  try {
+    const result = await prisma.faceProfile.deleteMany({ where: { userId: req.params.id } });
+    if (result.count === 0) {
+      return res.status(404).json({ success: false, error: 'FACE_NOT_FOUND', message: 'Người dùng này chưa có ảnh khuôn mặt.' });
+    }
+    return res.json({ success: true, message: 'Đã xoá ảnh khuôn mặt.' });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
@@ -331,6 +409,6 @@ async function faceCheckin(req, res) {
 
 module.exports = {
   getMyFaceProfile, saveMyFaceProfile, consentMyFaceProfile, deleteMyFaceProfile,
-  importFaceProfiles,
+  importFaceProfiles, getUserFaceProfile, setUserFaceProfile, deleteUserFaceProfile,
   getFaceGallery, getFaceThumbnail, faceCheckin,
 };

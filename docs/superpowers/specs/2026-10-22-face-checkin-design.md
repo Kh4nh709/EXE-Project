@@ -33,8 +33,15 @@ cho khách mời (INVITATION/PUBLIC), vì khách không có tài khoản.
 Dữ liệu sinh trắc học là dữ liệu cá nhân nhạy cảm (NĐ 13/2023, Luật BVDLCN 2025).
 - Kiosk chỉ dùng profile có `consentAt` và cùng `FACE_MODEL`.
 - Sinh viên tự chụp: phải tick đồng ý; server từ chối nếu thiếu `consent: true` (`FACE_CONSENT_REQUIRED`).
-- Admin import ảnh thẻ: `consentAt = null`. Sinh viên thấy banner trên trang chủ và bấm đồng ý ở `/khuon-mat`.
-  Import lại ảnh mới thì phải đồng ý lại.
+- ~~Admin import ảnh thẻ: `consentAt = null`, sinh viên bấm đồng ý ở `/khuon-mat`.~~ Đổi ngày 2026-11-05 theo
+  quyết định chủ sản phẩm: **ảnh admin đặt có hiệu lực ngay** (`consentAt` = lúc admin đặt) — nhà trường chịu
+  trách nhiệm cơ sở pháp lý cho ảnh mình cung cấp. Ảnh import trước ngày đó có thể vẫn chờ đồng ý; banner và
+  `POST /api/me/face-profile/consent` giữ lại cho chúng.
+- Import theo lô mặc định bỏ qua sinh viên đã tự chụp và đang dùng; admin tick `overwrite` thì đè luôn.
+- Trang Quản lý người dùng (cập nhật 2026-11-05): admin xem / thay / xoá ảnh của từng người qua
+  `GET|PUT|DELETE /api/admin/users/:id/face-profile`. PUT chỉ cho tài khoản STUDENT (`FACE_STUDENT_ONLY`),
+  được đè cả ảnh tự chụp, vẫn chặn `FACE_DUPLICATE`. Mọi ảnh admin đặt (lô hay từng người) đi qua
+  `adminProfileData`: `source = IMPORT`, `consentAt = now`, `importEmbedding` = ảnh mới.
 - Sinh viên xoá được toàn bộ dữ liệu khuôn mặt, kể cả ảnh nhà trường import.
 
 ## Chống điểm danh hộ

@@ -122,8 +122,11 @@ where the whole router shares a role. `/api/public/*` is the only unauthenticate
   `faceEngine` falls back to the main thread only when the browser can't run it in a worker.
   The server never runs ML: `lib/faceProfile.js` only stores and compares vectors, and its
   `similarity` + thresholds must stay identical to `pages/face/faceMatch.js`. Changing the model or
-  config means bumping `FACE_MODEL`. Biometric data needs consent: the kiosk uses only profiles with
-  `consentAt`, and admin-imported photos (`POST /api/admin/face-profiles/import`) start unconsented.
+  config means bumping `FACE_MODEL`. The kiosk uses only profiles with `consentAt`: a student's own
+  capture requires ticking consent, while every admin-set photo — batch import (`POST /api/admin/face-profiles/import`, `overwrite`
+  to replace self-taken ones) or per-user from UserManagement (`/api/admin/users/:id/face-profile`) — goes
+  through `adminProfileData` and is **active immediately** (product-owner decision 2026-11-05: the school
+  owns the legal basis for photos it supplies; students can still delete theirs at `/khuon-mat`).
   Students manage their profile at `/khuon-mat` (`/api/me/face-profile`). Saving rejects lookalikes of
   other accounts (`FACE_DUPLICATE`) to stop proxy attendance.
   Spec: `docs/superpowers/specs/2026-10-22-face-checkin-design.md`.

@@ -131,7 +131,12 @@ export const faceApi = {
   consentMine: () => api.post('/api/me/face-profile/consent'),
   deleteMine: () => api.delete('/api/me/face-profile'),
   // Admin import ảnh thẻ theo MSSV — items: [{ mssv, embedding, thumbnail }].
-  importProfiles: (items) => api.post('/api/admin/face-profiles/import', { items }),
+  // overwrite = đè cả ảnh sinh viên đã tự chụp (mặc định bỏ qua những người đó).
+  importProfiles: (items, overwrite = false) => api.post('/api/admin/face-profiles/import', { items, overwrite }),
+  // Admin xem / thay / xoá ảnh của từng người — data: { embedding, thumbnail }.
+  getUserFace: (userId) => api.get(`/api/admin/users/${userId}/face-profile`),
+  setUserFace: (userId, data) => api.put(`/api/admin/users/${userId}/face-profile`, data),
+  deleteUserFace: (userId) => api.delete(`/api/admin/users/${userId}/face-profile`),
   // Kiosk BTC.
   gallery: (eventId) => api.get(`/api/events/${eventId}/face-gallery`),
   thumbnail: (eventId, userId) => api.get(`/api/events/${eventId}/face-gallery/${userId}/thumbnail`, { responseType: 'blob' }),

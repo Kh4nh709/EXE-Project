@@ -4,12 +4,13 @@ import toast from 'react-hot-toast';
 import { faceApi } from '../../services/api';
 import Button from '../../components/ui/Button';
 import { Banner } from '../../components/ui/States';
+import { Checkbox } from '../../components/ui/Choice';
 import { cropThumbnail, detectFaces, faceProblem, loadFaceEngine, loadImageFile } from '../face/faceEngine';
 import { encodeEmbedding } from '../face/faceMatch';
 
 // Import ảnh thẻ sinh viên: tên file (bỏ đuôi) là MSSV, vd SE123456.jpg. Mô hình chạy
 // ngay trong trình duyệt admin — chỉ vector + thumbnail được gửi lên, ảnh gốc không rời
-// máy. Ảnh import luôn chờ sinh viên đồng ý mới được kiosk dùng (xem lib/faceProfile.js).
+// máy. Ảnh admin import có hiệu lực ngay (xem lib/faceProfile.js#adminProfileData).
 
 // Trùng MAX_IMPORT_ITEMS của backend.
 const BATCH = 50;
@@ -20,6 +21,7 @@ export default function FaceImport({ onDone }) {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
   const [result, setResult] = useState(null); // { updated, skipped[] }
+  const [overwrite, setOverwrite] = useState(false);
   const fileRef = useRef(null);
   const folderRef = useRef(null);
 
@@ -41,7 +43,7 @@ export default function FaceImport({ onDone }) {
     let batch = [];
     const flush = async () => {
       if (!batch.length) return;
-      const { data } = await faceApi.importProfiles(batch);
+      const { data } = await faceApi.importProfiles(batch, overwrite);
       updated += data.data.updated;
       skipped.push(...data.data.skipped);
       batch = [];
@@ -87,9 +89,19 @@ export default function FaceImport({ onDone }) {
         <p className="mt-2 overflow-x-auto rounded-lg bg-surface px-3 py-2 font-mono text-xs text-foreground">SE123456.jpg · SE123457.png</p>
         <p className="mt-2 text-pretty text-xs text-muted">
           Mỗi ảnh một khuôn mặt, chụp chính diện. Ảnh được xử lý ngay trên máy này; chỉ đặc trưng khuôn mặt và ảnh thu nhỏ
-          được lưu. Sinh viên phải bấm đồng ý thì kiosk mới dùng ảnh. Không ghi đè ảnh sinh viên đã tự chụp.
+          được lưu. Kiosk dùng ảnh ngay sau khi import.
         </p>
       </div>
+
+      <Checkbox
+        checked={overwrite}
+        disabled={running}
+        onChange={(e) => setOverwrite(e.target.checked)}
+        label="Ghi đè cả ảnh sinh viên đã tự chụp"
+        desc={overwrite
+          ? 'Ảnh mới thay ảnh tự chụp và kiosk dùng ngay.'
+          : 'Đang tắt: sinh viên đã tự chụp và đang dùng sẽ được giữ nguyên ảnh.'}
+      />
 
       <div className="flex flex-wrap gap-2">
         <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only" onChange={(e) => pick(e.target.files)} />

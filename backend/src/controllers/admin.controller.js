@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const XLSX = require('xlsx');
 const prisma = require('../lib/prisma');
 const emailService = require('../services/email.service');
+const { profileStatus } = require('../lib/faceProfile');
 const {
   MAX_BULK,
   MAX_BULK_PASSWORD,
@@ -41,13 +42,18 @@ async function listUsers(req, res) {
         where,
         skip,
         take,
-        select: { id: true, mssv: true, email: true, name: true, role: true, class: true, isActive: true, createdAt: true },
+        select: {
+          id: true, mssv: true, email: true, name: true, role: true, class: true, isActive: true, createdAt: true,
+          // Chỉ cột nhỏ để tính trạng thái — embedding/thumbnail nặng, tải riêng khi mở ảnh.
+          faceProfile: { select: { model: true, consentAt: true } },
+        },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.user.count({ where }),
     ]);
 
-    return res.json({ success: true, data: users, total });
+    const data = users.map(({ faceProfile, ...u }) => ({ ...u, faceStatus: profileStatus(faceProfile) }));
+    return res.json({ success: true, data, total });
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }

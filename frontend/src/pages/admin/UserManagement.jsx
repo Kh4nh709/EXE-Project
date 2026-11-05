@@ -19,6 +19,7 @@ import { LoadError, SkeletonRows } from '../../components/ui/States';
 import { cx } from '../../utils/cx';
 import ImportStudents from './ImportStudents';
 import FaceImport from './FaceImport';
+import UserFaceModal, { FACE_STATUS } from './UserFaceModal';
 import BulkUserActions, { MAX_BULK } from './BulkUserActions';
 
 const PAGE_SIZES = [20, 50, 100];
@@ -92,6 +93,7 @@ export default function UserManagement() {
   const [createModal, setCreateModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [faceImportModal, setFaceImportModal] = useState(false);
+  const [faceUser, setFaceUser] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
 
@@ -347,6 +349,11 @@ export default function UserManagement() {
     }
   };
 
+  // Modal ảnh khuôn mặt báo lại trạng thái mới → sửa dòng tại chỗ, khỏi tải lại cả trang.
+  const onFaceChanged = (id, faceStatus) => {
+    setUsers((list) => list.map((u) => (u.id === id ? { ...u, faceStatus } : u)));
+  };
+
   const totalPages = Math.ceil(total / pageSize);
   const hasFilters = Boolean(search || roleFilter || statusFilter);
 
@@ -356,6 +363,9 @@ export default function UserManagement() {
       <Dropdown align="end" ariaLabel="Thao tác" trigger={<IconButton icon={Ellipsis} label="Thao tác" row />}>
         <MenuGroup>
           <MenuItem icon={Pencil} onSelect={() => openEdit(u)}>Sửa thông tin</MenuItem>
+          {(u.role === 'STUDENT' || (u.faceStatus && u.faceStatus !== 'none')) && (
+            <MenuItem icon={ScanFace} onSelect={() => setFaceUser(u)}>Ảnh khuôn mặt</MenuItem>
+          )}
           {!me && (
             <>
               <MenuItem icon={KeyRound} onSelect={() => openResetPassword(u)}>Đặt lại mật khẩu</MenuItem>
@@ -411,6 +421,7 @@ export default function UserManagement() {
               <Th className="hidden md:table-cell">MSSV</Th>
               <Th className="hidden lg:table-cell">Lớp</Th>
               <Th className="hidden sm:table-cell">Vai trò</Th>
+              <Th className="hidden xl:table-cell">Khuôn mặt</Th>
               <th className="w-px px-2"><span className="sr-only">Thao tác</span></th>
             </tr>
           </thead>
@@ -447,6 +458,13 @@ export default function UserManagement() {
                   <td className={cx('hidden whitespace-nowrap px-4 py-3 tabular-nums md:table-cell', u.mssv ? 'text-foreground' : 'text-muted')}>{u.mssv || '—'}</td>
                   <td className={cx('hidden whitespace-nowrap px-4 py-3 lg:table-cell', u.class ? 'text-foreground' : 'text-muted')}>{u.class || '—'}</td>
                   <td className="hidden px-4 py-3 sm:table-cell"><RoleBadge role={u.role} /></td>
+                  <td className="hidden whitespace-nowrap px-4 py-3 xl:table-cell">
+                    {u.role === 'STUDENT' || (u.faceStatus && u.faceStatus !== 'none') ? (
+                      <button type="button" onClick={() => setFaceUser(u)} title="Xem / sửa ảnh khuôn mặt" className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                        <Badge tone={FACE_STATUS[u.faceStatus || 'none'].tone} icon={ScanFace}>{FACE_STATUS[u.faceStatus || 'none'].label}</Badge>
+                      </button>
+                    ) : <span className="text-muted">—</span>}
+                  </td>
                   <td className="px-2 py-3">{rowMenu(u)}</td>
                 </tr>
               );
@@ -624,8 +642,11 @@ export default function UserManagement() {
 
       {/* Import ảnh thẻ để check-in bằng khuôn mặt */}
       <Modal open={faceImportModal} onClose={() => setFaceImportModal(false)} title="Import ảnh khuôn mặt theo MSSV" size="md">
-        <FaceImport />
+        <FaceImport onDone={() => load(page)} />
       </Modal>
+
+      {/* Ảnh khuôn mặt của một người: xem, thay, xoá */}
+      <UserFaceModal user={faceUser} onClose={() => setFaceUser(null)} onChanged={onFaceChanged} />
     </Layout>
   );
 }

@@ -75,7 +75,8 @@ function decodeThumbnail(value) {
   return { buffer };
 }
 
-// Profile kiosk được dùng: đúng mô hình hiện tại và chủ tài khoản đã đồng ý.
+// Profile kiosk được dùng: đúng mô hình hiện tại và đã được kích hoạt (sinh viên đồng ý khi tự
+// chụp, hoặc admin đặt ảnh). Ảnh import cũ trước khi đổi quy tắc có thể vẫn chờ đồng ý.
 function isActiveProfile(profile) {
   return Boolean(profile && profile.model === FACE_MODEL && profile.consentAt);
 }
@@ -83,6 +84,22 @@ function isActiveProfile(profile) {
 function profileStatus(profile) {
   if (!profile || profile.model !== FACE_MODEL) return 'none';
   return profile.consentAt ? 'active' : 'pending-consent';
+}
+
+// Dữ liệu ghi khi ADMIN đặt ảnh (import theo lô hoặc thay ảnh từng người). Có hiệu lực NGAY
+// (consentAt = lúc admin đặt): chủ sản phẩm quyết định nhà trường chịu trách nhiệm cơ sở pháp
+// lý cho ảnh mình cung cấp, không bắt sinh viên bấm đồng ý. Sinh viên vẫn xoá được ở /khuon-mat.
+// importEmbedding = ảnh mới để ảnh tự chụp sau này phải giống nó — ai tự chụp mặt người khác
+// thay vào sẽ bị FACE_MISMATCH.
+function adminProfileData(embedding, thumbnail) {
+  return {
+    embedding: embedding.buffer,
+    importEmbedding: embedding.buffer,
+    thumbnail: thumbnail.buffer,
+    model: FACE_MODEL,
+    source: 'IMPORT',
+    consentAt: new Date(),
+  };
 }
 
 // Mọi profile cùng mô hình, đã giải mã — import một lô thì nạp MỘT lần rồi so trên RAM.
@@ -125,6 +142,7 @@ module.exports = {
   toVector,
   isActiveProfile,
   profileStatus,
+  adminProfileData,
   loadProfileVectors,
   findDuplicateIn,
   findDuplicate,

@@ -5,7 +5,9 @@ const {
   listUsers, createUser, updateUser, deleteUser, resetPassword, resetDeviceBinding, importStudents, getStats,
   bulkUpdateUsers, bulkResetPasswords, bulkResetDevices, bulkDeleteUsers,
 } = require('../controllers/admin.controller');
-const { importFaceProfiles } = require('../controllers/face.controller');
+const {
+  importFaceProfiles, getUserFaceProfile, setUserFaceProfile, deleteUserFaceProfile,
+} = require('../controllers/face.controller');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -29,5 +31,9 @@ router.put('/users/:id', updateUser);
 router.delete('/users/:id', deleteUser);
 router.post('/users/:id/reset-password', resetPassword);
 router.post('/users/:id/reset-device', resetDeviceBinding);
+// Ảnh khuôn mặt từng người: PUT nhận vector + thumbnail do trình duyệt admin tính, như import.
+router.get('/users/:id/face-profile', getUserFaceProfile);
+router.put('/users/:id/face-profile', setUserFaceProfile);
+router.delete('/users/:id/face-profile', deleteUserFaceProfile);
 
 module.exports = router;

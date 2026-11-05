@@ -133,7 +133,7 @@ test('face-profile routes are STUDENT only', async () => {
 
 // ── admin import ─────────────────────────────────────────────────
 
-test('admin import: imports pending consent, skips unknown MSSV, self-enrolled students and duplicates', async () => {
+test('admin import: imports as active, skips unknown MSSV, self-enrolled students and duplicates', async () => {
   stubMethod(prisma.user, 'findUnique', async () => ADMIN);
   stubMethod(prisma.user, 'findMany', async () => [
     { id: 'u1', mssv: 'SE1', faceProfile: null },
@@ -158,8 +158,98 @@ test('admin import: imports pending consent, skips unknown MSSV, self-enrolled s
   assert.deepStrictEqual(res.body.data.skipped.map((s) => s.mssv), ['SE2', 'SE9', 'SE3']);
   const { create } = upsert.calls[0][0];
   assert.strictEqual(create.source, 'IMPORT');
-  assert.strictEqual(create.consentAt, null);
+  assert.ok(create.consentAt instanceof Date);
   assert.ok(create.importEmbedding);
+});
+
+test('admin import: overwrite=true replaces a self-enrolled photo and stays active', async () => {
+  stubMethod(prisma.user, 'findUnique', async () => ADMIN);
+  stubMethod(prisma.user, 'findMany', async () => [
+    { id: 'u2', mssv: 'SE2', faceProfile: { source: 'SELF', model: face.FACE_MODEL, consentAt: new Date() } },
+  ]);
+  stubMethod(prisma.faceProfile, 'findMany', async () => [{ userId: 'u2', embedding: bytes(vectorFor(5)) }]);
+  const upsert = stubMethod(prisma.faceProfile, 'upsert', async () => ({}));
+
+  const res = await request(app).post('/api/admin/face-profiles/import').set('Authorization', `Bearer ${adminToken}`)
+    .send({ overwrite: true, items: [{ mssv: 'SE2', embedding: b64(vectorFor(2)) }] });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.data.updated, 1);
+  const { update } = upsert.calls[0][0];
+  assert.strictEqual(update.source, 'IMPORT');
+  assert.ok(update.consentAt instanceof Date);
+});
+
+// ── admin quản lý ảnh từng người ─────────────────────────────────
+
+const byId = (target) => async ({ where }) => (where.id === 'admin-1' ? ADMIN : target);
+
+test('admin get user face: returns status and thumbnail, none when absent', async () => {
+  stubMethod(prisma.user, 'findUnique', async () => ADMIN);
+  stubMethod(prisma.faceProfile, 'findUnique', async ({ where }) => (where.userId === 'u1'
+    ? { userId: 'u1', model: face.FACE_MODEL, source: 'SELF', consentAt: new Date(), updatedAt: new Date(), thumbnail: Buffer.from(JPEG, 'base64') }
+    : null));
+  const ok = await request(app).get('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${adminToken}`);
+  assert.strictEqual(ok.status, 200);
+  assert.strictEqual(ok.body.data.status, 'active');
+  assert.strictEqual(ok.body.data.thumbnail, JPEG);
+  const none = await request(app).get('/api/admin/users/u9/face-profile').set('Authorization', `Bearer ${adminToken}`);
+  assert.deepStrictEqual(none.body.data, { status: 'none' });
+});
+
+test('admin set user face: overwrites as IMPORT, active immediately', async () => {
+  stubMethod(prisma.user, 'findUnique', byId({ id: 'u1', role: 'STUDENT' }));
+  stubMethod(prisma.faceProfile, 'findMany', async () => []);
+  const upsert = stubMethod(prisma.faceProfile, 'upsert', async ({ update }) => ({ ...update, updatedAt: new Date() }));
+  const res = await request(app).put('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${adminToken}`)
+    .send({ embedding: b64(vectorFor(1)), thumbnail: JPEG });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.data.status, 'active');
+  const { update, where } = upsert.calls[0][0];
+  assert.strictEqual(where.userId, 'u1');
+  assert.strictEqual(update.source, 'IMPORT');
+  assert.ok(update.consentAt instanceof Date);
+  assert.ok(update.importEmbedding);
+});
+
+test('admin set user face: rejects non-students, unknown users and lookalikes of another account', async () => {
+  stubMethod(prisma.user, 'findUnique', byId({ id: 'b1', role: 'BTC' }));
+  const btc = await request(app).put('/api/admin/users/b1/face-profile').set('Authorization', `Bearer ${adminToken}`)
+    .send({ embedding: b64(vectorFor(1)) });
+  assert.strictEqual(btc.body.error, 'FACE_STUDENT_ONLY');
+  restoreStubs();
+
+  stubMethod(prisma.user, 'findUnique', byId(null));
+  const missing = await request(app).put('/api/admin/users/x/face-profile').set('Authorization', `Bearer ${adminToken}`)
+    .send({ embedding: b64(vectorFor(1)) });
+  assert.strictEqual(missing.status, 404);
+  restoreStubs();
+
+  stubMethod(prisma.user, 'findUnique', byId({ id: 'u1', role: 'STUDENT' }));
+  stubMethod(prisma.faceProfile, 'findMany', async () => [{ userId: 'u2', embedding: bytes(vectorFor(2)) }]);
+  const upsert = stubMethod(prisma.faceProfile, 'upsert', async () => ({}));
+  const dup = await request(app).put('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${adminToken}`)
+    .send({ embedding: b64(vectorFor(2, 0.02)) });
+  assert.strictEqual(dup.status, 409);
+  assert.strictEqual(dup.body.error, 'FACE_DUPLICATE');
+  assert.strictEqual(upsert.calls.length, 0);
+});
+
+test('admin delete user face: deletes, 404 when there is none', async () => {
+  stubMethod(prisma.user, 'findUnique', async () => ADMIN);
+  let count = 1;
+  const del = stubMethod(prisma.faceProfile, 'deleteMany', async () => ({ count }));
+  const ok = await request(app).delete('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${adminToken}`);
+  assert.strictEqual(ok.status, 200);
+  assert.deepStrictEqual(del.calls[0][0], { where: { userId: 'u1' } });
+  count = 0;
+  const none = await request(app).delete('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${adminToken}`);
+  assert.strictEqual(none.status, 404);
+});
+
+test('admin face endpoints are ADMIN-only', async () => {
+  stubMethod(prisma.user, 'findUnique', async () => BTC_USER);
+  const res = await request(app).delete('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${btcToken}`);
+  assert.strictEqual(res.status, 403);
 });
 
 test('admin import: rejects batches over the cap', async () => {
