@@ -54,4 +54,4 @@ function validateTicket(ticket, eventId, type, deviceId) {
   return safeEqual(sign(eventId, type, deviceId, expiresAt), signature);
 }
 
-module.exports = { issueTicket, validateTicket, TICKET_TTL_MS };
+module.exports = { issueTicket, validateTicket, TICKET_TTL_MS, deviceFingerprint, safeEqual };

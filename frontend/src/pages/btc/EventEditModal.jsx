@@ -27,6 +27,7 @@ export default function EventEditModal({ open, event, onClose, onSaved }) {
         checkoutClose: toLocalInput(event.checkoutClose),
         isWhitelisted: event.isWhitelisted ?? false,
         allowRegistration: event.allowRegistration ?? true,
+        otpCheckinEnabled: event.otpCheckinEnabled ?? true,
         kind: event.kind || 'STANDARD',
         startsAt: toLocalInput(event.startsAt),
       });

@@ -179,7 +179,7 @@ async function createEvent(req, res) {
       name, description, location, lat, lng, radius,
       gpsEnabled, checkinOpen, checkinClose, checkoutOpen, checkoutClose,
       checkinState, checkoutState,
-      isWhitelisted, allowRegistration, memberIds,
+      isWhitelisted, allowRegistration, memberIds, otpCheckinEnabled,
     } = body;
 
     // Khung giờ là TUỲ CHỌN — BTC có thể bỏ trống và chủ động mở/đóng điểm danh
@@ -222,6 +222,8 @@ async function createEvent(req, res) {
         checkoutState: parseGateState(checkoutState),
         isWhitelisted: isWhitelisted || false,
         allowRegistration: allowRegistration !== false,
+        // Mặc định bật (chốt với product owner 2026-11-07) — chỉ false khi BTC tắt.
+        otpCheckinEnabled: otpCheckinEnabled !== false,
         createdById: req.user.id,
         ...(isPublic && { kind: 'PUBLIC', publicForm: defaultPublicForm() }),
         ...(memberIds?.length && {
@@ -317,7 +319,7 @@ async function updateEvent(req, res) {
       name, description, location, lat, lng, radius,
       gpsEnabled, checkinOpen, checkinClose, checkoutOpen, checkoutClose,
       checkinState, checkoutState,
-      isWhitelisted, allowRegistration,
+      isWhitelisted, allowRegistration, otpCheckinEnabled,
     } = body;
 
     const dateVals = {};
@@ -364,6 +366,7 @@ async function updateEvent(req, res) {
         ...(dateVals.checkoutClose && { checkoutClose: dateVals.checkoutClose }),
         ...(isWhitelisted !== undefined && { isWhitelisted }),
         ...(allowRegistration !== undefined && { allowRegistration }),
+        ...(otpCheckinEnabled !== undefined && { otpCheckinEnabled: otpCheckinEnabled !== false }),
         // Đây là cách nút "Mở điểm danh" / "Đóng điểm danh" trên EventDetail
         // hoạt động — gửi PUT chỉ với checkinState (hoặc checkoutState) mà
         // không cần đụng tới các trường khác.

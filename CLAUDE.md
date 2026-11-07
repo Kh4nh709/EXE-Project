@@ -144,7 +144,17 @@ minted code stays valid **at least 90s** (up to 120s) after the screen has rotat
 `processCheckin` accepts either a raw `token` or a `ticket` (see `lib/scanTicket.js`) as proof of
 scanning; the frontend always sends the ticket when it has one.
 `checkin.controller.processCheckin` validates in fixed order: token → event → whitelist membership
-→ gate → GPS (haversine vs `event.radius`) → device binding → attendance upsert. Rejections that
+→ gate → GPS (haversine vs `event.radius`) → device binding → one-device-one-person → attendance upsert.
+Steps from whitelist on live in `lib/selfCheckin.js#performSelfCheckin`, shared with the **no-login
+path**: when `Event.otpCheckinEnabled` (default on), `ScanLanding` asks for email/MSSV instead of
+redirecting to `/login` → `POST /api/public/checkin-otp/request` (checks everything *before* spending
+an email; 60 s cooldown) → `/verify` (OTP bound to deviceId, burned after 5 wrong tries via
+`OtpToken.attempts`) returns a **check-in pass** (`lib/checkinPass.js`, stateless HMAC of
+user+event+device, 24 h, no JWT) → `POST /api/public/self-checkin`. The pass also covers checkout and
+the feedback form (`/api/public/feedback/:id/response`, header `X-Checkin-Pass`) so one person costs
+one email per event. Pass errors are `400 PASS_INVALID`, never 401 (`api.js` logs out on 401).
+A device that already checked in someone else at an event gets `DEVICE_USED_BY_OTHER` on both paths.
+Spec: `docs/superpowers/specs/2026-11-07-otp-checkin-design.md`. Rejections that
 indicate abuse are written to `FraudLog` via a best-effort `logFraud` that never throws.
 BTC can undo one person's check-in (`DELETE /api/events/:id/attendance/:userId/checkin`, from the
 attendance tab and the face kiosk): the row goes back to `REGISTERED` (never deleted — see

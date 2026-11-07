@@ -12,7 +12,8 @@ import { cx } from '../../utils/cx';
 // Form trả lời đánh giá, dùng ở 2 nơi: trang /feedback/:eventId và ngay dưới
 // thẻ "Check-out thành công" của trang quét mã (showTitle — trang đó không có
 // header riêng). onLoaded(data) cho trang cha lấy tiêu đề/tên sự kiện.
-export default function FeedbackResponseForm({ eventId, showTitle = false, onLoaded }) {
+// checkinPass: người check-in bằng OTP không đăng nhập — gọi API bằng thẻ điểm danh.
+export default function FeedbackResponseForm({ eventId, showTitle = false, onLoaded, checkinPass }) {
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -20,14 +21,17 @@ export default function FeedbackResponseForm({ eventId, showTitle = false, onLoa
   const [justSent, setJustSent] = useState(false);
 
   useEffect(() => {
-    feedbackApi.getMyResponse(eventId)
+    const load = checkinPass
+      ? feedbackApi.getMyResponseWithPass(eventId, checkinPass)
+      : feedbackApi.getMyResponse(eventId);
+    load
       .then(({ data: res }) => {
         setData(res.data);
         setAnswers(res.data.myResponse?.answers || {});
         onLoaded?.(res.data);
       })
       .catch((err) => setLoadError(err.response?.data?.message || 'Không tải được form đánh giá'));
-  }, [eventId]); // eslint-disable-line
+  }, [eventId, checkinPass]); // eslint-disable-line
 
   const box = cx('rounded-2xl bg-surface', showTitle ? 'p-5' : 'border border-border p-4 sm:p-5');
 
@@ -56,7 +60,9 @@ export default function FeedbackResponseForm({ eventId, showTitle = false, onLoa
 
     setSubmitting(true);
     try {
-      const { data: res } = await feedbackApi.submit(eventId, answers);
+      const { data: res } = checkinPass
+        ? await feedbackApi.submitWithPass(eventId, answers, checkinPass)
+        : await feedbackApi.submit(eventId, answers);
       toast.success(res.message);
       setData((d) => ({ ...d, myResponse: res.data }));
       setJustSent(true);

@@ -267,6 +267,12 @@ export default function EventFormFields({ form, setForm, inModal = false, canPic
                   checked={form.isWhitelisted}
                   onChange={(e) => set('isWhitelisted', e.target.checked)}
                 />
+                <Checkbox
+                  label="Cho phép check-in bằng email, không cần đăng nhập"
+                  desc="Quét QR, nhập email, nhận mã 6 số qua email là check-in được. Mỗi điện thoại chỉ check-in cho một người."
+                  checked={form.otpCheckinEnabled !== false}
+                  onChange={(e) => set('otpCheckinEnabled', e.target.checked)}
+                />
               </div>
             </Section>
           )}

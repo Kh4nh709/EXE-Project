@@ -198,6 +198,10 @@ ALTER TABLE "attendance_events"
 ALTER TABLE "attendance_events"
   ADD COLUMN IF NOT EXISTS "seatMap" JSONB;
 
+-- Check-in bằng email + OTP không cần đăng nhập (mặc định bật).
+ALTER TABLE "attendance_events"
+  ADD COLUMN IF NOT EXISTS "otpCheckinEnabled" BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "attendance_events_scannerToken_key"
   ON "attendance_events"("scannerToken");
 
@@ -295,6 +299,7 @@ CREATE TABLE IF NOT EXISTS "attendance_otp_tokens" (
   "purpose"   TEXT        NOT NULL DEFAULT 'DEVICE_BIND',
   "expiresAt" TIMESTAMPTZ NOT NULL,
   "used"      BOOLEAN     NOT NULL DEFAULT FALSE,
+  "attempts"  INTEGER     NOT NULL DEFAULT 0,
   "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT "attendance_otp_tokens_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "attendance_otp_tokens_userId_fkey"
@@ -302,6 +307,10 @@ CREATE TABLE IF NOT EXISTS "attendance_otp_tokens" (
     REFERENCES "attendance_users"("id")
     ON DELETE RESTRICT ON UPDATE CASCADE
 );
+
+-- Đếm lần nhập sai của mã OTP check-in (huỷ mã sau 5 lần sai).
+ALTER TABLE "attendance_otp_tokens"
+  ADD COLUMN IF NOT EXISTS "attempts" INTEGER NOT NULL DEFAULT 0;
 
 -- ----- Đánh giá sau sự kiện -----
 -- questions/answers là JSON, cấu trúc kiểm tra ở backend (lib/feedbackForm.js).

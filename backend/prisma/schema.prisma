@@ -97,6 +97,9 @@ model Event {
   isWhitelisted     Boolean   @default(false)
   // Cho phép người ngoài tự đăng ký tham gia qua link công khai /dang-ky/:id.
   allowRegistration Boolean   @default(true)
+  // Check-in bằng email + OTP ngay trên trang quét, không cần đăng nhập
+  // (lib/checkinPass.js). Mặc định bật; tắt thì trang quét bắt đăng nhập như cũ.
+  otpCheckinEnabled Boolean   @default(true)
   isActive          Boolean   @default(true)
   // Link chia sẻ báo cáo công khai: /api/public/reports/:reportShareToken xem
   // được không cần đăng nhập. NULL = chưa chia sẻ hoặc BTC đã thu hồi, nên thu
@@ -261,6 +264,9 @@ model OtpToken {
   purpose   String   @default("DEVICE_BIND")
   expiresAt DateTime
   used      Boolean  @default(false)
+  // Số lần nhập sai — mã OTP check-in bị huỷ sau 5 lần sai. Đếm theo mã chứ không
+  // theo IP vì cả lớp dùng chung wifi trường.
+  attempts  Int      @default(0)
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])

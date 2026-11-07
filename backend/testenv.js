@@ -12,6 +12,9 @@ process.env.RESET_PASSWORD_MAX = process.env.RESET_PASSWORD_MAX || '1000';
 process.env.LOGIN_OTP_MAX = process.env.LOGIN_OTP_MAX || '1000';
 process.env.LOGIN_OTP_VERIFY_MAX = process.env.LOGIN_OTP_VERIFY_MAX || '1000';
 process.env.SCAN_TICKET_MAX = process.env.SCAN_TICKET_MAX || '1000';
+process.env.CHECKIN_OTP_MAX = process.env.CHECKIN_OTP_MAX || '1000';
+process.env.CHECKIN_OTP_VERIFY_MAX = process.env.CHECKIN_OTP_VERIFY_MAX || '1000';
+process.env.SELF_CHECKIN_MAX = process.env.SELF_CHECKIN_MAX || '1000';
 
 // Stub method cho Prisma delegate: node:test mock.method không chạy được với
 // Prisma client (delegate dùng Proxy, own-property value là undefined).

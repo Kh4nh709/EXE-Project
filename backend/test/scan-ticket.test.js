@@ -28,6 +28,8 @@ function mockCheckinHappyPath() {
     id: 'b1', userId: 'student-1', deviceId: 'dev-1', isTrusted: true,
   }));
   stubMethod(prisma.attendance, 'findUnique', async () => null);
+  // Luật một máy một người: chưa ai khác check-in bằng máy này.
+  stubMethod(prisma.attendance, 'findFirst', async () => null);
   stubMethod(prisma.attendance, 'upsert', async () => ({ id: 'a1' }));
 }
 

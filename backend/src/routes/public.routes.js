@@ -9,6 +9,11 @@ const { issueScanTicket } = require('../controllers/checkin.controller');
 // Báo cáo được BTC chia sẻ bằng link công khai: người xem không có tài khoản.
 const { getSharedReport } = require('../controllers/report.controller');
 const { getPublicCheckinPage, submitPublicCheckin } = require('../controllers/publicCheckin.controller');
+// Check-in bằng email + OTP, không cần đăng nhập (spec 2026-11-07-otp-checkin-design.md).
+const {
+  requestCheckinOtp, verifyCheckinOtp, checkinWithPass, authenticateCheckinPass,
+} = require('../controllers/checkinOtp.controller');
+const { getMyResponse, submitResponse } = require('../controllers/feedback.controller');
 // Sự kiện thiệp mời: khách xem thiệp của mình, tình nguyện viên quét qua link.
 const {
   publicScannerSummary, publicScan, publicSearchGuests, publicCheckInGuest, publicWalkIn,
@@ -38,6 +43,31 @@ const scanTicketLimiter = rateLimit({
 });
 
 router.post('/scan-ticket', scanTicketLimiter, issueScanTicket);
+
+// Mỗi lần gửi mã là một email trong hạn mức Brevo → siết theo máy (cả lớp chung
+// wifi nên không khoá theo IP). Dò mã 6 số được chặn chính ở bộ đếm sai của từng
+// mã (OtpToken.attempts), trần ở đây chỉ là lớp ngoài.
+const byDevice = (req) => req.body?.deviceId || req.headers['x-device-id'] || req.ip;
+const limiter = (max, message) => rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: byDevice,
+  message: { success: false, message },
+});
+router.post('/checkin-otp/request',
+  limiter(Number(process.env.CHECKIN_OTP_MAX) || 10, 'Bạn đã yêu cầu mã quá nhiều lần. Vui lòng thử lại sau 15 phút.'),
+  requestCheckinOtp);
+router.post('/checkin-otp/verify',
+  limiter(Number(process.env.CHECKIN_OTP_VERIFY_MAX) || 20, 'Bạn đã nhập mã quá nhiều lần. Vui lòng thử lại sau 15 phút.'),
+  verifyCheckinOtp);
+router.post('/self-checkin',
+  limiter(Number(process.env.SELF_CHECKIN_MAX) || 30, 'Bạn đã thử quá nhiều lần. Vui lòng thử lại sau ít phút.'),
+  checkinWithPass);
+// Form đánh giá sau check-out cho người check-in bằng thẻ (header X-Checkin-Pass).
+router.get('/feedback/:id/response', authenticateCheckinPass, getMyResponse);
+router.post('/feedback/:id/response', authenticateCheckinPass, submitResponse);
 
 router.get('/events', listOpenEvents);
 router.get('/events/:id', getPublicEvent);

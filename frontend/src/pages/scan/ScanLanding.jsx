@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
-  ArrowDown, CircleCheck, CircleX, Clock, LoaderCircle, Lock, MapPin, MapPinOff, RotateCw, Wifi,
+  ArrowDown, ArrowLeft, CircleCheck, CircleX, Clock, LoaderCircle, Lock, Mail, MapPin, MapPinOff, RotateCw,
+  ShieldCheck, Smartphone, Wifi,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkinApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { getCurrentPosition } from '../../utils/gps';
 import Button from '../../components/ui/Button';
+import { Field, Input } from '../../components/ui/Input';
+import OtpInput from '../../components/ui/OtpInput';
 import Logo from '../../components/ui/Logo';
 import { cx } from '../../utils/cx';
 import FeedbackResponseForm from '../feedback/FeedbackResponseForm';
@@ -44,8 +47,55 @@ function clearStoredTicket() {
   }
 }
 
+// Thẻ điểm danh (check-in bằng email + OTP, không đăng nhập) sống tới hết sự
+// kiện để check-out cuối buổi và form đánh giá không phải gửi email lần hai —
+// nên lưu localStorage (còn sau khi đóng tab), theo từng sự kiện.
+const PASS_KEY = 'fpt_checkin_passes';
+
+function readPasses() {
+  try {
+    const all = JSON.parse(localStorage.getItem(PASS_KEY) || '{}');
+    return all && typeof all === 'object' ? all : {};
+  } catch {
+    return {};
+  }
+}
+
+function readStoredPass(eventId) {
+  const saved = readPasses()[eventId];
+  return saved?.pass && saved.expiresAt > Date.now() ? saved : null;
+}
+
+function writePasses(all) {
+  try {
+    localStorage.setItem(PASS_KEY, JSON.stringify(all));
+  } catch {
+    // Chế độ riêng tư — thẻ chỉ sống trong trang này, check-out sẽ phải nhận mã lại.
+  }
+}
+
+function storePass(eventId, info) {
+  const now = Date.now();
+  // Dọn thẻ hết hạn của các sự kiện cũ cho khỏi phình.
+  const all = Object.fromEntries(Object.entries(readPasses()).filter(([, v]) => v?.expiresAt > now));
+  writePasses({ ...all, [eventId]: info });
+}
+
+function clearStoredPass(eventId) {
+  const all = readPasses();
+  delete all[eventId];
+  writePasses(all);
+}
+
+// Lỗi khi xin mã mà người dùng sửa được ngay tại form (gõ nhầm email, mail lỗi,
+// bị giới hạn tần suất) → hiện dưới ô nhập. Còn lại (mã QR hết hạn, cổng đóng,
+// đã check-in…) là kết quả cuối → thẻ lỗi như luồng đăng nhập.
+const INLINE_REQUEST_ERRORS = new Set(['NOT_REGISTERED', 'ACCOUNT_NOT_FOUND', 'MISSING_PARAMS', 'EMAIL_FAILED', 'SERVER_ERROR']);
+
 const STAGES = {
   INIT: 'init',
+  EMAIL: 'email',
+  OTP: 'otp',
   GPS: 'gps',
   PROCESSING: 'processing',
   SUCCESS: 'success',
@@ -58,6 +108,7 @@ function errorLook(code) {
   if (code === 'QR_EXPIRED') return { icon: Clock, tone: 'bg-error-bg text-error-text' };
   if (code === 'OUT_OF_RANGE') return { icon: MapPinOff, tone: 'bg-error-bg text-error-text' };
   if (code === 'GPS_REQUIRED') return { icon: MapPin, tone: 'bg-warning-bg text-warning' };
+  if (code === 'DEVICE_USED_BY_OTHER') return { icon: Smartphone, tone: 'bg-error-bg text-error-text' };
   return { icon: CircleX, tone: 'bg-error-bg text-error-text' };
 }
 
@@ -95,6 +146,26 @@ export default function ScanLanding() {
   const [errorInfo, setErrorInfo] = useState(null);
   const [, setGpsStatus] = useState(null);
 
+  // Luồng không đăng nhập
+  const ticketRef = useRef(null);
+  const [passInfo, setPassInfo] = useState(() => (eventId ? readStoredPass(eventId) : null));
+  const [identifier, setIdentifier] = useState('');
+  const [otp, setOtp] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [formError, setFormError] = useState('');
+  const [emailNotice, setEmailNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [resendAt, setResendAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
+
+  // Đồng hồ cho nút "Gửi lại mã" — chỉ chạy khi đang ở bước nhập mã.
+  useEffect(() => {
+    if (stage !== STAGES.OTP) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [stage]);
+  const resendIn = Math.max(0, Math.ceil((resendAt - now) / 1000));
+
   useEffect(() => {
     // Wait until AuthContext has resolved token from localStorage.
     // Without this guard, user=null during the brief loading window causes a
@@ -128,18 +199,113 @@ export default function ScanLanding() {
       }
     }
 
-    if (!user) {
-      // Per BRD CK-02: not logged in → redirect to login, then redirect back here.
-      // Vé đã nằm trong sessionStorage nên quay lại đây vẫn dùng được dù token
-      // trên URL lúc đó đã hết hạn.
-      navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    ticketRef.current = activeTicket;
+
+    if (user) {
+      processCheckin(activeTicket);
       return;
     }
 
-    processCheckin(activeTicket);
+    // Chưa đăng nhập: đã xác minh email cho sự kiện này trên máy này (vd. lúc
+    // check-in) thì dùng luôn thẻ; chưa thì hỏi email ngay tại đây thay vì đẩy
+    // sang trang đăng nhập.
+    const saved = readStoredPass(eventId);
+    if (saved) {
+      setPassInfo(saved);
+      processCheckin(activeTicket, saved.pass);
+      return;
+    }
+    setStage(STAGES.EMAIL);
   };
 
-  const processCheckin = async (activeTicket) => {
+  // Vẫn giữ lối đăng nhập bằng mật khẩu. Vé đã nằm trong sessionStorage nên quay
+  // lại đây vẫn dùng được dù token trên URL lúc đó đã hết hạn.
+  const goLogin = () => {
+    navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  };
+
+  const showError = (errData) => {
+    // Vé hết hạn thì phải bỏ đi, nếu không lần quét mã mới vẫn lôi vé cũ ra dùng.
+    if (errData?.error === 'QR_EXPIRED') clearStoredTicket();
+    setErrorInfo({
+      title: getErrorTitle(errData?.error),
+      message: errData?.message || 'Có lỗi xảy ra. Vui lòng thử lại.',
+      error: errData?.error,
+      extra: errData,
+    });
+    setStage(STAGES.ERROR);
+  };
+
+  const startResendTimer = (seconds) => {
+    setResendAt(Date.now() + (seconds || 60) * 1000);
+    setNow(Date.now());
+  };
+
+  const requestCode = async (e) => {
+    e?.preventDefault();
+    const value = identifier.trim();
+    if (!value) {
+      setFormError('Vui lòng nhập email hoặc MSSV');
+      return;
+    }
+
+    setBusy(true);
+    setFormError('');
+    try {
+      const { data } = await checkinApi.requestOtp({
+        eventId, type, identifier: value, ticket: ticketRef.current || undefined, token,
+      });
+      setMaskedEmail(data.maskedEmail);
+      startResendTimer(data.retryAfter);
+      setOtp('');
+      setStage(STAGES.OTP);
+    } catch (err) {
+      const errData = err.response?.data;
+      if (errData?.error === 'OTP_COOLDOWN') {
+        // Mã vừa gửi (vd. request bị api.js tự thử lại) — cứ sang bước nhập mã.
+        setMaskedEmail(errData.maskedEmail);
+        startResendTimer(errData.retryAfter);
+        setStage(STAGES.OTP);
+      } else if (errData?.error === 'OTP_CHECKIN_DISABLED') {
+        goLogin();
+      } else if (!errData?.error || INLINE_REQUEST_ERRORS.has(errData.error)) {
+        setFormError(errData?.message || 'Không gửi được mã. Vui lòng thử lại.');
+      } else {
+        showError(errData);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async (e) => {
+    e?.preventDefault();
+    if (otp.length !== 6) {
+      setFormError('Mã xác minh gồm 6 chữ số');
+      return;
+    }
+
+    setBusy(true);
+    setFormError('');
+    try {
+      const { data } = await checkinApi.verifyOtp({ eventId, identifier: identifier.trim(), otp });
+      const info = { pass: data.pass, expiresAt: data.expiresAt, name: data.user?.name };
+      storePass(eventId, info);
+      setPassInfo(info);
+      setBusy(false);
+      processCheckin(ticketRef.current, info.pass);
+    } catch (err) {
+      const errData = err.response?.data;
+      setOtp('');
+      // Sai 5 lần thì mã đã bị huỷ — cho gửi lại ngay.
+      if (errData?.error === 'OTP_TOO_MANY_ATTEMPTS') setResendAt(0);
+      const left = errData?.attemptsLeft;
+      setFormError(`${errData?.message || 'Mã xác minh không đúng.'}${left ? ` Còn ${left} lần thử.` : ''}`);
+      setBusy(false);
+    }
+  };
+
+  const processCheckin = async (activeTicket, pass) => {
     setStage(STAGES.GPS);
     let gps = null;
 
@@ -158,26 +324,29 @@ export default function ScanLanding() {
     setStage(STAGES.PROCESSING);
 
     try {
-      const { data } = await checkinApi.process({ eventId, token, ticket: activeTicket, type, gps });
+      const payload = { eventId, token, ticket: activeTicket || undefined, type, gps };
+      const { data } = pass
+        ? await checkinApi.processWithPass({ ...payload, pass })
+        : await checkinApi.process(payload);
       clearStoredTicket();
       setResult(data);
       setStage(STAGES.SUCCESS);
     } catch (err) {
       const errData = err.response?.data;
-      // Vé hết hạn thì phải bỏ đi, nếu không lần quét mã mới vẫn lôi vé cũ ra dùng.
-      if (errData?.error === 'QR_EXPIRED') clearStoredTicket();
-      setErrorInfo({
-        title: getErrorTitle(errData?.error),
-        message: errData?.message || 'Có lỗi xảy ra. Vui lòng thử lại.',
-        error: errData?.error,
-        extra: errData,
-      });
-      setStage(STAGES.ERROR);
+      if (pass && errData?.error === 'PASS_INVALID') {
+        // Thẻ hết hạn / tài khoản bị khoá → xác minh email lại từ đầu.
+        clearStoredPass(eventId);
+        setPassInfo(null);
+        setEmailNotice(errData.message);
+        setStage(STAGES.EMAIL);
+        return;
+      }
+      showError(errData);
     }
   };
 
   // Thử lại dùng vé đang còn trong phiên (nếu có), như lần quét đầu
-  const retry = () => processCheckin(readStoredTicket(eventId, type));
+  const retry = () => processCheckin(readStoredTicket(eventId, type), user ? undefined : passInfo?.pass);
 
   const getErrorTitle = (code) => {
     const map = {
@@ -191,7 +360,9 @@ export default function ScanLanding() {
       ATTENDANCE_NOT_OPEN: 'Chưa mở điểm danh',
       ATTENDANCE_CLOSED: 'Đã đóng điểm danh',
       DEVICE_NOT_BOUND: 'Thiết bị chưa xác thực',
+      DEVICE_USED_BY_OTHER: 'Thiết bị đã dùng cho người khác',
       NOT_REGISTERED: 'Chưa đăng ký tham gia',
+      EVENT_NOT_FOUND: 'Không tìm thấy sự kiện',
     };
     return map[code] || 'Không thể check-in';
   };
@@ -225,6 +396,78 @@ export default function ScanLanding() {
           <Logo className="size-6" />
           <span>{isCheckin ? 'Điểm danh vào' : 'Điểm danh ra'} · FPT Event</span>
         </div>
+
+        {stage === STAGES.EMAIL && (
+          <section className="rounded-2xl bg-surface p-6">
+            <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-info-bg text-info">
+              <Mail className="size-8" aria-hidden="true" />
+            </div>
+            <h1 className="mt-4 text-center text-xl font-semibold text-foreground">Xác minh để {isCheckin ? 'check-in' : 'check-out'}</h1>
+            <p className="mt-1 text-pretty text-center text-sm text-muted">
+              Nhập email hoặc MSSV đã đăng ký. Mã 6 chữ số sẽ được gửi tới email của bạn, không cần đăng nhập.
+            </p>
+            {emailNotice && <p className="mt-4 rounded-xl bg-warning-bg p-3 text-pretty text-sm text-warning">{emailNotice}</p>}
+            <form onSubmit={requestCode} className="mt-5 flex flex-col gap-4">
+              <Field label="Email hoặc MSSV" error={formError}>
+                {(id) => (
+                  <Input
+                    id={id}
+                    className="h-12 md:h-12"
+                    placeholder="vd. an@fpt.edu.vn"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoFocus
+                    value={identifier}
+                    invalid={Boolean(formError)}
+                    onChange={(e) => { setIdentifier(e.target.value); if (formError) setFormError(''); }}
+                  />
+                )}
+              </Field>
+              <Button type="submit" variant="primary" size="auth" loading={busy} className="w-full">Gửi mã xác minh</Button>
+              <Button variant="ghost" size="auth" icon={Lock} onClick={goLogin} className="w-full">Đăng nhập bằng mật khẩu</Button>
+            </form>
+          </section>
+        )}
+
+        {stage === STAGES.OTP && (
+          <section className="rounded-2xl bg-surface p-6">
+            <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-info-bg text-info">
+              <ShieldCheck className="size-8" aria-hidden="true" />
+            </div>
+            <h1 className="mt-4 text-center text-xl font-semibold text-foreground">Nhập mã xác minh</h1>
+            <p className="mt-1 text-pretty text-center text-sm text-muted">
+              Mã đã gửi tới <span className="font-medium text-foreground">{maskedEmail}</span>. Hiệu lực 10 phút, nhớ xem cả thư rác.
+            </p>
+            <form onSubmit={verifyCode} className="mt-5 flex flex-col gap-4">
+              <fieldset>
+                <legend className="mb-2 text-sm font-medium text-foreground">Mã xác minh</legend>
+                <OtpInput value={otp} onChange={(v) => { setOtp(v); if (formError) setFormError(''); }} invalid={Boolean(formError)} idPrefix="checkin-otp" />
+                <p aria-live="polite" className="mt-2 min-h-4 text-pretty text-xs text-error-text">{formError}</p>
+              </fieldset>
+              <Button type="submit" variant="primary" size="auth" loading={busy} className="w-full">
+                Xác minh và {isCheckin ? 'check-in' : 'check-out'}
+              </Button>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <button
+                  type="button"
+                  onClick={() => { setStage(STAGES.EMAIL); setOtp(''); setFormError(''); }}
+                  className="inline-flex min-h-10 items-center gap-1 text-muted outline-none hover:text-foreground"
+                >
+                  <ArrowLeft className="size-4" aria-hidden="true" /> Đổi email
+                </button>
+                <button
+                  type="button"
+                  disabled={resendIn > 0 || busy}
+                  onClick={() => requestCode()}
+                  className="min-h-10 font-medium tabular-nums text-foreground outline-none hover:underline disabled:cursor-not-allowed disabled:text-muted disabled:no-underline"
+                >
+                  {resendIn > 0 ? `Gửi lại mã (${resendIn}s)` : 'Gửi lại mã'}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
 
         {stage === STAGES.GPS && (
           <ResultCard icon={MapPin} tone="bg-info-bg text-info" title="Đang lấy vị trí GPS" sub="Cho phép truy cập vị trí khi trình duyệt hỏi." spin />
@@ -275,6 +518,10 @@ export default function ScanLanding() {
               </>
             )}
 
+            {errorInfo.error === 'DEVICE_USED_BY_OTHER' && (
+              <p className="mt-4 text-pretty text-sm text-muted">Mỗi điện thoại chỉ điểm danh được cho một người. Nếu máy bạn hỏng, hãy nhờ Ban tổ chức điểm danh tay.</p>
+            )}
+
             {errorInfo.error === 'QR_EXPIRED' && (
               <p className="mt-4 text-pretty text-sm text-muted">Quét lại mã QR mới trên màn hình sự kiện.</p>
             )}
@@ -296,7 +543,7 @@ export default function ScanLanding() {
               </p>
             )}
 
-            {!errorInfo.error?.includes('ALREADY') && (
+            {!errorInfo.error?.includes('ALREADY') && errorInfo.error !== 'DEVICE_USED_BY_OTHER' && (
               <div className="mt-5">
                 <Button size="auth" icon={RotateCw} onClick={retry} className="w-full">Thử lại</Button>
               </div>
@@ -307,7 +554,7 @@ export default function ScanLanding() {
         {/* Form đánh giá ngay sau check-out */}
         {showFeedback && (
           <div ref={feedbackRef} className="mt-4 scroll-mt-4">
-            <FeedbackResponseForm eventId={eventId} showTitle />
+            <FeedbackResponseForm eventId={eventId} showTitle checkinPass={user ? undefined : passInfo?.pass} />
           </div>
         )}
 
@@ -315,6 +562,12 @@ export default function ScanLanding() {
           <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted">
             <Lock className="size-3.5" aria-hidden="true" />
             Đăng nhập với tài khoản <span className="font-medium text-foreground">{user.name}</span>
+          </p>
+        )}
+        {!user && passInfo && (stage === STAGES.GPS || stage === STAGES.PROCESSING) && (
+          <p className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted">
+            <ShieldCheck className="size-3.5" aria-hidden="true" />
+            Đã xác minh: <span className="font-medium text-foreground">{passInfo.name}</span>
           </p>
         )}
       </div>

@@ -26,6 +26,7 @@ export default function EventCreate() {
     checkoutClose: '',
     isWhitelisted: false,
     allowRegistration: true,
+    otpCheckinEnabled: true,
     kind: 'STANDARD',
     startsAt: '',
   });

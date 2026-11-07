@@ -122,6 +122,11 @@ export const checkinApi = {
   issueTicket: (data) => api.post('/api/public/scan-ticket', { ...data, deviceId: getDeviceId() }),
   process: (data) => api.post('/api/checkin', { ...data, deviceId: getDeviceId() }),
   getStatus: (eventId) => api.get(`/api/checkin/status/${eventId}`),
+
+  // Check-in không cần đăng nhập: email/MSSV → OTP → thẻ điểm danh (lib/checkinPass.js).
+  requestOtp: (data) => api.post('/api/public/checkin-otp/request', { ...data, deviceId: getDeviceId() }),
+  verifyOtp: (data) => api.post('/api/public/checkin-otp/verify', { ...data, deviceId: getDeviceId() }),
+  processWithPass: (data) => api.post('/api/public/self-checkin', { ...data, deviceId: getDeviceId() }),
 };
 
 // Check-in bằng khuôn mặt. Embedding luôn do trình duyệt tính (pages/face/faceEngine.js);
@@ -201,6 +206,11 @@ export const feedbackApi = {
 
   getMyResponse: (eventId) => api.get(`/api/feedback/events/${eventId}/response`),
   submit: (eventId, answers) => api.post(`/api/feedback/events/${eventId}/response`, { answers }),
+  // Người check-in bằng OTP không có JWT — form đánh giá xác minh bằng thẻ điểm danh.
+  getMyResponseWithPass: (eventId, pass) =>
+    api.get(`/api/public/feedback/${eventId}/response`, { headers: { 'X-Checkin-Pass': pass } }),
+  submitWithPass: (eventId, answers, pass) =>
+    api.post(`/api/public/feedback/${eventId}/response`, { answers }, { headers: { 'X-Checkin-Pass': pass } }),
 };
 
 // Chứng nhận tham gia. Ảnh/PDF đều cần header Authorization nên phải tải qua
