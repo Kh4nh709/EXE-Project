@@ -25,15 +25,18 @@ async function login(req, res) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin đăng nhập' });
     }
 
+    // Chỉ ADMIN/BTC/LECTURER có tài khoản; người tham gia (STUDENT) trả cùng lỗi như
+    // sai mật khẩu và không bị đếm khoá — không lộ email nào là người tham gia.
     const user = await prisma.user.findFirst({
       where: {
         OR: [{ mssv: identifier }, { email: identifier }],
         isActive: true,
+        role: { not: 'STUDENT' },
       },
     });
 
     if (!user) {
-      return res.status(401).json({ success: false, message: 'MSSV/Email hoặc mật khẩu không đúng' });
+      return res.status(401).json({ success: false, message: 'Email hoặc mật khẩu không đúng' });
     }
 
     if (user.lockedUntil && user.lockedUntil > now) {
@@ -54,7 +57,7 @@ async function login(req, res) {
           ? { failedLoginAttempts: 0, lockedUntil: new Date(now.getTime() + 15 * 60 * 1000) }
           : { failedLoginAttempts: failed },
       });
-      return res.status(401).json({ success: false, message: 'MSSV/Email hoặc mật khẩu không đúng' });
+      return res.status(401).json({ success: false, message: 'Email hoặc mật khẩu không đúng' });
     }
 
     await prisma.user.update({
@@ -209,11 +212,14 @@ const RESET_OTP_TTL_MS = 15 * 60 * 1000;
 const GENERIC_FORGOT_MESSAGE =
   'Nếu tài khoản tồn tại, mã đặt lại mật khẩu đã được gửi tới email đăng ký. Hãy kiểm tra hộp thư đến và thư rác.';
 
+// Không bao giờ trả người tham gia (STUDENT): đặt lại mật khẩu cho họ là mở đường
+// đăng nhập cho một người vốn không được có tài khoản.
 function findActiveUserByIdentifier(identifier) {
   return prisma.user.findFirst({
     where: {
       OR: [{ mssv: identifier }, { email: identifier }],
       isActive: true,
+      role: { not: 'STUDENT' },
     },
   });
 }
@@ -330,146 +336,6 @@ async function resetPassword(req, res) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Đăng nhập bằng OTP (không cần mật khẩu) — dành cho SINH VIÊN.
-// Cố tình KHÔNG mở cho ADMIN/BTC/LECTURER: với các vai trò này, chiếm được hộp
-// thư là chiếm được toàn quyền hệ thống, nên họ vẫn phải đăng nhập bằng mật
-// khẩu (và OTP thiết bị mới) như cũ.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
-const GENERIC_LOGIN_OTP_MESSAGE =
-  'Nếu tài khoản sinh viên tồn tại, mã đăng nhập đã được gửi tới email đăng ký. Hãy kiểm tra hộp thư đến và thư rác.';
-
-async function requestLoginOtp(req, res) {
-  try {
-    const { identifier, deviceId } = req.body || {};
-
-    if (!identifier || typeof identifier !== 'string') {
-      return res.status(400).json({ success: false, message: 'Vui lòng nhập MSSV hoặc email' });
-    }
-    if (!deviceId) {
-      return res.status(400).json({ success: false, message: 'Thiếu mã thiết bị' });
-    }
-
-    const user = await findActiveUserByIdentifier(identifier.trim());
-
-    // Không có tài khoản, hoặc có nhưng không phải sinh viên → vẫn trả 200 với
-    // đúng thông điệp như trường hợp gửi được, để không dò ra tài khoản nào tồn
-    // tại và tài khoản nào là admin.
-    if (!user || user.role !== 'STUDENT') {
-      return res.json({ success: true, message: GENERIC_LOGIN_OTP_MESSAGE });
-    }
-
-    await prisma.otpToken.deleteMany({
-      where: { userId: user.id, purpose: 'LOGIN', used: false },
-    });
-
-    const otp = generateOtp();
-    await prisma.otpToken.create({
-      data: {
-        userId: user.id,
-        token: otp,
-        deviceId,
-        purpose: 'LOGIN',
-        expiresAt: new Date(Date.now() + LOGIN_OTP_TTL_MS),
-      },
-    });
-
-    try {
-      await emailService.sendLoginOtpEmail(user.email, user.name, otp);
-    } catch (emailErr) {
-      console.error('Failed to send login OTP email:', emailErr);
-      await prisma.otpToken.deleteMany({
-        where: { userId: user.id, token: otp, purpose: 'LOGIN' },
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'EMAIL_FAILED',
-        message: 'Không gửi được email. Vui lòng thử lại sau.',
-      });
-    }
-
-    return res.json({ success: true, message: GENERIC_LOGIN_OTP_MESSAGE });
-  } catch (err) {
-    console.error('Request login OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-}
-
-async function loginWithOtp(req, res) {
-  try {
-    const { identifier, otp, deviceId, deviceInfo } = req.body || {};
-
-    if (!identifier || !otp || !deviceId) {
-      return res.status(400).json({ success: false, message: 'Thiếu thông tin đăng nhập' });
-    }
-
-    const user = await findActiveUserByIdentifier(String(identifier).trim());
-
-    const otpRecord = user && user.role === 'STUDENT'
-      ? await prisma.otpToken.findFirst({
-          where: {
-            userId: user.id,
-            token: String(otp).trim(),
-            // Buộc đúng thiết bị đã yêu cầu mã: mã đọc trộm trong email không
-            // dùng được ở máy khác.
-            deviceId,
-            purpose: 'LOGIN',
-            used: false,
-            expiresAt: { gt: new Date() },
-          },
-        })
-      : null;
-
-    if (!otpRecord) {
-      return res.status(400).json({
-        success: false,
-        error: 'INVALID_LOGIN_OTP',
-        message: 'Mã đăng nhập không đúng hoặc đã hết hạn',
-      });
-    }
-
-    await prisma.otpToken.update({ where: { id: otpRecord.id }, data: { used: true } });
-
-    // Nhập đúng mã trong hộp thư đã chứng minh quyền sở hữu email — đúng điều mà
-    // OTP DEVICE_BIND kiểm tra — nên tin luôn thiết bị này, khỏi bắt xác thực
-    // thêm lần nữa ở lần đăng nhập bằng mật khẩu sau đó.
-    await prisma.deviceBinding.upsert({
-      where: { userId_deviceId: { userId: user.id, deviceId } },
-      create: { userId: user.id, deviceId, deviceInfo, isTrusted: true },
-      update: { isTrusted: true, deviceInfo },
-    });
-
-    // Quên mật khẩu và bị khoá 15 phút do gõ sai thường đi cùng nhau — vào được
-    // bằng OTP thì gỡ luôn khoá.
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { failedLoginAttempts: 0, lockedUntil: null },
-    });
-
-    const token = signToken(user.id);
-
-    return res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        mssv: user.mssv,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        // Luôn false với luồng OTP: người dùng vào bằng mã email chứ không dùng
-        // mật khẩu tạm, nên không thể bắt họ nhập "mật khẩu hiện tại" để đổi.
-        isFirstLogin: false,
-      },
-    });
-  } catch (err) {
-    console.error('Login with OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-}
-
 async function getMe(req, res) {
   return res.json({ success: true, user: req.user });
 }
@@ -477,8 +343,6 @@ async function getMe(req, res) {
 module.exports = {
   login,
   verifyOtp,
-  requestLoginOtp,
-  loginWithOtp,
   changePassword,
   forgotPassword,
   resetPassword,

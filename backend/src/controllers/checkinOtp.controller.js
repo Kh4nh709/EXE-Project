@@ -14,7 +14,7 @@ const { fmtTime } = require('../lib/datetime');
 // Check-in không cần đăng nhập: quét QR → nhập email/MSSV → OTP qua email → thẻ
 // điểm danh (lib/checkinPass.js) → điểm danh. Spec: 2026-11-07-otp-checkin-design.md
 //
-// Khác /api/auth/login-otp ở chỗ KHÔNG cấp JWT: chiếm được hộp thư chỉ cho quyền
+// KHÔNG cấp JWT: chiếm được hộp thư chỉ cho quyền
 // điểm danh đúng sự kiện đó, không chiếm được tài khoản — nên mở cho mọi vai trò
 // có trong danh sách, và mượn máy bạn để check-in không để lại phiên đăng nhập.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,7 +70,7 @@ async function loadOtpEvent(eventId, res) {
     res.status(403).json({
       success: false,
       error: 'OTP_CHECKIN_DISABLED',
-      message: 'Sự kiện này yêu cầu đăng nhập tài khoản để điểm danh.',
+      message: 'Sự kiện này không nhận check-in bằng email. Vui lòng gặp Ban tổ chức để điểm danh.',
     });
     return null;
   }

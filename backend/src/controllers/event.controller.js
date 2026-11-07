@@ -7,6 +7,8 @@ const { parseEventDates, parseGateState, parseOptionalDate } = require('../lib/p
 const { gateSummary } = require('../lib/attendanceGate');
 const { defaultPublicForm } = require('../lib/publicForm');
 const { publicQrPayload } = require('./publicCheckin.controller');
+const { addParticipantsToEvent, parseSheet, importSummary } = require('../lib/participants');
+const { profileStatus } = require('../lib/faceProfile');
 
 // Sự kiện thiệp mời (kind = INVITATION): khách ngoài được BTC quét thiệp, nên các
 // trường của kiểu điểm danh tự quét luôn bị khoá. isWhitelisted = true và
@@ -680,35 +682,70 @@ async function listMembers(req, res) {
         where,
         skip,
         take: parseInt(limit),
-        include: { user: { select: { id: true, mssv: true, name: true, email: true, class: true } } },
+        include: {
+          user: {
+            select: {
+              id: true, mssv: true, name: true, email: true, class: true,
+              // BTC đặt ảnh khuôn mặt cho từng người ngay trong danh sách — cần biết ai đã có.
+              faceProfile: { select: { model: true, consentAt: true } },
+            },
+          },
+        },
         orderBy: { user: { name: 'asc' } },
       }),
       prisma.eventMember.count({ where }),
     ]);
 
-    return res.json({ success: true, data: members, total, page: parseInt(page), limit: parseInt(limit) });
+    const data = members.map(({ user: { faceProfile, ...user }, ...m }) => ({
+      ...m,
+      user: { ...user, faceStatus: profileStatus(faceProfile) },
+    }));
+    return res.json({ success: true, data, total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error('List members error:', err);
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 }
 
+// BTC nhập người tham gia bằng email + họ tên (MSSV, SĐT tuỳ chọn) — người tham gia
+// không có tài khoản, xem lib/participants.js. Một người hay cả danh sách dán vào đều
+// đi đường này; partial success (một số dòng bị bỏ qua) vẫn là 200.
 async function addMembers(req, res) {
   try {
     const event = await loadEventForWrite(req, res);
     if (!event) return;
     if (rejectNonStandardEvent(event, res)) return;
 
-    const { userIds } = req.body;
-    if (!Array.isArray(userIds) || userIds.length === 0) {
-      return res.status(400).json({ success: false, message: 'Chưa chọn người dùng để thêm' });
-    }
+    const result = await addParticipantsToEvent(event.id, req.body?.participants);
+    if (result.error) return res.status(400).json({ success: false, message: result.error });
 
-    const { added } = await addUsersToEvent(req.params.id, userIds);
-
-    return res.json({ success: true, message: `Đã thêm ${added} thành viên`, added });
+    return res.json({ success: true, ...result, message: importSummary(result) });
   } catch (err) {
     console.error('Add members error:', err);
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
+// Nhập danh sách từ file Excel/CSV (cột Email, Họ tên; MSSV, SĐT tuỳ chọn).
+async function importMembers(req, res) {
+  try {
+    const event = await loadEventForWrite(req, res);
+    if (!event) return;
+    if (rejectNonStandardEvent(event, res)) return;
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ success: false, message: 'Chưa chọn file' });
+    }
+
+    const sheet = parseSheet(req.file.buffer);
+    if (sheet.error) return res.status(400).json({ success: false, message: sheet.error });
+
+    // Dòng 1 là tiêu đề → dữ liệu bắt đầu ở dòng 2, để BTC dò lại đúng dòng bị bỏ qua.
+    const result = await addParticipantsToEvent(event.id, sheet.rows, { firstLine: 2 });
+    if (result.error) return res.status(400).json({ success: false, message: result.error });
+
+    return res.json({ success: true, ...result, message: importSummary(result) });
+  } catch (err) {
+    console.error('Import members error:', err);
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 }
@@ -728,36 +765,32 @@ async function removeMember(req, res) {
 }
 
 // Danh sách lớp kèm sĩ số, để BTC thêm nhanh nguyên lớp vào sự kiện.
-// `remaining` = số sinh viên của lớp chưa có trong danh sách tham gia.
+// `remaining` = số người của lớp chưa có trong danh sách tham gia.
 async function listClasses(req, res) {
   try {
     const event = await loadEventForWrite(req, res);
     if (!event) return;
 
-    const [groups, members] = await Promise.all([
-      prisma.user.groupBy({
-        by: ['class'],
-        where: { isActive: true, role: 'STUDENT', class: { not: null } },
-        _count: { _all: true },
-        orderBy: { class: 'asc' },
+    const [classes, inEvent] = await Promise.all([
+      prisma.class.findMany({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, _count: { select: { members: true } } },
       }),
-      prisma.eventMember.findMany({
-        where: { eventId: req.params.id },
-        select: { user: { select: { class: true } } },
+      prisma.classMember.groupBy({
+        by: ['classId'],
+        where: { user: { eventMembers: { some: { eventId: req.params.id } } } },
+        _count: { _all: true },
       }),
     ]);
+    const inEventByClass = Object.fromEntries(inEvent.map((g) => [g.classId, g._count._all]));
 
-    const inEventByClass = {};
-    for (const { user } of members) {
-      if (user?.class) inEventByClass[user.class] = (inEventByClass[user.class] || 0) + 1;
-    }
-
-    const data = groups
-      .filter((g) => g.class && g.class.trim())
-      .map((g) => {
-        const total = g._count._all;
-        const inEvent = inEventByClass[g.class] || 0;
-        return { class: g.class, total, inEvent, remaining: Math.max(0, total - inEvent) };
+    const data = classes
+      .filter((c) => c._count.members > 0)
+      .map((c) => {
+        const total = c._count.members;
+        const already = inEventByClass[c.id] || 0;
+        return { id: c.id, class: c.name, total, inEvent: already, remaining: Math.max(0, total - already) };
       });
 
     return res.json({ success: true, data });
@@ -767,49 +800,48 @@ async function listClasses(req, res) {
   }
 }
 
-// Thêm toàn bộ sinh viên đang hoạt động của một hoặc nhiều lớp vào danh sách tham gia.
+// Thêm toàn bộ danh sách của một hoặc nhiều lớp vào danh sách tham gia.
+// Nhận id lớp (`classIds`); vẫn nhận tên lớp (`classes`) cho client cũ.
 async function addMembersByClass(req, res) {
   try {
     const event = await loadEventForWrite(req, res);
     if (!event) return;
     if (rejectNonStandardEvent(event, res)) return;
 
-    const raw = req.body?.classes ?? req.body?.class;
-    const classes = [...new Set(
-      (Array.isArray(raw) ? raw : [raw])
-        .filter((c) => typeof c === 'string')
-        .map((c) => c.trim())
-        .filter(Boolean)
+    const clean = (raw) => [...new Set(
+      (Array.isArray(raw) ? raw : [raw]).filter((c) => typeof c === 'string').map((c) => c.trim()).filter(Boolean),
     )];
+    const classIds = clean(req.body?.classIds);
+    const classNames = clean(req.body?.classes ?? req.body?.class);
 
-    if (classes.length === 0) {
+    if (classIds.length === 0 && classNames.length === 0) {
       return res.status(400).json({ success: false, message: 'Chưa chọn lớp nào để thêm' });
     }
 
-    const users = await prisma.user.findMany({
-      where: { isActive: true, role: 'STUDENT', class: { in: classes } },
-      select: { id: true },
+    const members = await prisma.classMember.findMany({
+      where: {
+        user: { isActive: true },
+        class: classIds.length ? { id: { in: classIds } } : { name: { in: classNames } },
+      },
+      select: { userId: true },
     });
+    const userIds = [...new Set(members.map((m) => m.userId))];
 
-    if (users.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Không tìm thấy sinh viên nào đang hoạt động trong lớp đã chọn',
-      });
+    if (userIds.length === 0) {
+      return res.status(404).json({ success: false, message: 'Lớp đã chọn chưa có ai trong danh sách' });
     }
 
-    const { added } = await addUsersToEvent(req.params.id, users.map((u) => u.id));
-    const skipped = users.length - added;
+    const { added } = await addUsersToEvent(req.params.id, userIds);
+    const skipped = userIds.length - added;
 
     return res.json({
       success: true,
       added,
       skipped,
-      matched: users.length,
-      classes,
+      matched: userIds.length,
       message: skipped > 0
-        ? `Đã thêm ${added} sinh viên (${skipped} người đã có sẵn trong danh sách)`
-        : `Đã thêm ${added} sinh viên vào danh sách tham gia`,
+        ? `Đã thêm ${added} người (${skipped} người đã có sẵn trong danh sách)`
+        : `Đã thêm ${added} người vào danh sách tham gia`,
     });
   } catch (err) {
     console.error('Add members by class error:', err);
@@ -817,49 +849,10 @@ async function addMembersByClass(req, res) {
   }
 }
 
-// Tìm sinh viên CHƯA thuộc sự kiện để thêm vào danh sách tham gia.
-async function searchUsersForEvent(req, res) {
-  try {
-    const event = await loadEventForWrite(req, res);
-    if (!event) return;
-
-    const { q } = req.query;
-    if (!q || !q.trim()) {
-      return res.json({ success: true, data: [] });
-    }
-
-    const existing = await prisma.eventMember.findMany({
-      where: { eventId: req.params.id },
-      select: { userId: true },
-    });
-    const excludeIds = existing.map((m) => m.userId);
-
-    const users = await prisma.user.findMany({
-      where: {
-        isActive: true,
-        id: { notIn: excludeIds },
-        OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { mssv: { contains: q, mode: 'insensitive' } },
-          { email: { contains: q, mode: 'insensitive' } },
-        ],
-      },
-      select: { id: true, mssv: true, name: true, email: true, class: true },
-      take: 20,
-      orderBy: { name: 'asc' },
-    });
-
-    return res.json({ success: true, data: users });
-  } catch (err) {
-    console.error('Search users for event error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-}
-
 module.exports = {
   listEvents, createEvent, getEvent, updateEvent, deleteEvent,
   getQRToken, getLiveCheckins, getAttendance, manualCheckin, undoCheckin,
-  listMembers, addMembers, removeMember, searchUsersForEvent,
+  listMembers, addMembers, importMembers, removeMember,
   listClasses, addMembersByClass,
   rejectNonStandardEvent,
 };

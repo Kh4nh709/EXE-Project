@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { PDFDocument } = require('pdf-lib');
 const prisma = require('../src/lib/prisma');
 const emailService = require('../src/services/email.service');
+const { certificateToken } = require('../src/lib/certificateLink');
 const app = require('../src/app');
 const {
   DEFAULT_FIELDS, normalizeFields, layoutField, certificateValues, generateCertificateCode,
@@ -259,41 +260,39 @@ const CERT = {
   issuedAt: new Date('2026-10-01T10:00:00Z'), event: EVENT,
 };
 
-test('người khác (không phải chủ, không phải BTC sự kiện) xem chứng nhận → 404', async () => {
+test('BTC không tạo sự kiện xem chứng nhận qua /api/certificates → 404', async () => {
   loginAs();
   stubMethod(prisma.certificate, 'findUnique', async () => CERT);
   for (const path of ['', '/pdf', '/background']) {
-    const res = await request(app).get(`/api/certificates/cert-1${path}`).set('Authorization', auth('stu-2'));
+    const res = await request(app).get(`/api/certificates/cert-1${path}`).set('Authorization', auth('btc-2'));
     assert.strictEqual(res.status, 404, path);
   }
 });
 
-test('chủ chứng nhận: xem dữ liệu để vẽ và tải PDF', async () => {
-  loginAs();
+test('link chứng nhận sai chữ ký hoặc của chứng nhận khác → 404, không chạm DB', async () => {
+  const find = stubMethod(prisma.certificate, 'findUnique', async () => CERT);
+  const forged = certificateToken('cert-1').replace(/^cert-1\./, 'cert-2.');
+  for (const token of ['cert-1.deadbeef', forged, 'cert-1']) {
+    const res = await request(app).get(`/api/public/certificates/${token}`);
+    assert.strictEqual(res.status, 404, token);
+  }
+  assert.strictEqual(find.calls.length, 0);
+});
+
+test('người nhận: xem dữ liệu để vẽ và tải PDF qua link trong email, không cần đăng nhập', async () => {
   stubMethod(prisma.certificate, 'findUnique', async () => CERT);
   stubMethod(prisma.eventCertificateTemplate, 'findUnique', async () => TEMPLATE);
+  const token = certificateToken('cert-1');
 
-  const view = await request(app).get('/api/certificates/cert-1').set('Authorization', auth('stu-1'));
+  const view = await request(app).get(`/api/public/certificates/${token}`);
   assert.strictEqual(view.status, 200);
   assert.deepStrictEqual(view.body.data.values, {
     name: 'An', event: 'Hội thảo Đổi mới', date: 'Ngày 01/10/2026', code: 'Mã chứng nhận: CN-ABCD-EFGH',
   });
 
-  const pdf = await request(app).get('/api/certificates/cert-1/pdf').set('Authorization', auth('stu-1'));
+  const pdf = await request(app).get(`/api/public/certificates/${token}/pdf`);
   assert.strictEqual(pdf.status, 200);
   assert.strictEqual(pdf.headers['content-type'], 'application/pdf');
   assert.match(pdf.headers['content-disposition'], /^attachment;.*filename\*=UTF-8''/);
 });
 
-test('listEvents (STUDENT): kèm certificateId nếu đã được cấp', async () => {
-  loginAs();
-  stubMethod(prisma.event, 'findMany', async () => [
-    { id: 'e1', attendances: [], eventMembers: [], feedbackForm: null, certificates: [{ id: 'cert-1' }] },
-    { id: 'e2', attendances: [], eventMembers: [], feedbackForm: null, certificates: [] },
-  ]);
-  stubMethod(prisma.event, 'count', async () => 2);
-  const res = await request(app).get('/api/events').set('Authorization', auth('stu-1'));
-  assert.strictEqual(res.body.data[0].certificateId, 'cert-1');
-  assert.strictEqual(res.body.data[1].certificateId, null);
-  assert.strictEqual(res.body.data[0].certificates, undefined);
-});

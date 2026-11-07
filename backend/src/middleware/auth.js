@@ -27,6 +27,11 @@ async function authenticate(req, res, next) {
     if (!user || !user.isActive) {
       return res.status(401).json({ success: false, message: 'Tài khoản không hợp lệ hoặc đã bị khoá' });
     }
+    // Người tham gia (role STUDENT) không có tài khoản đăng nhập từ 2026-11-07 — chặn cả
+    // JWT cũ còn hạn được cấp trước thay đổi (lib/participants.js).
+    if (user.role === 'STUDENT') {
+      return res.status(401).json({ success: false, message: 'Người tham gia không cần đăng nhập. Hãy quét mã QR tại sự kiện.' });
+    }
 
     req.user = user;
     next();

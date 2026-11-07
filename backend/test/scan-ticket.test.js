@@ -10,7 +10,7 @@ const { stubMethod, restoreStubs } = require('../testenv');
 const authToken = jwt.sign({ userId: 'student-1' }, process.env.JWT_SECRET);
 const AUTH_USER = {
   id: 'student-1', mssv: 'SE1', email: 'a@b.c', name: 'An',
-  role: 'STUDENT', isActive: true, isFirstLogin: false,
+  role: 'LECTURER', isActive: true, isFirstLogin: false,
 };
 
 const realNow = Date.now;

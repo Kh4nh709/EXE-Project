@@ -42,8 +42,6 @@ app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/reports', require('./routes/report.routes'));
 app.use('/api/feedback', require('./routes/feedback.routes'));
 app.use('/api/certificates', require('./routes/certificate.routes'));
-// Sinh viên tự quản lý khuôn mặt dùng cho check-in tại cửa.
-app.use('/api/me/face-profile', require('./routes/face.routes'));
 
 // Health check — dùng cho UptimeRobot để giữ server khỏi ngủ (free tier).
 // Ping nhẹ vào DB (SELECT 1) nên cũng giữ luôn DB connection sống.

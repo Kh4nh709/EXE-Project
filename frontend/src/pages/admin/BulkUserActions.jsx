@@ -16,10 +16,9 @@ import { Banner } from '../../components/ui/States';
 const MAX_BULK = 200;
 const MAX_BULK_PASSWORD = 50;
 
+// Chỉ vai trò nhân sự — người tham gia không có tài khoản nên không đổi ai thành STUDENT được.
 const ROLE_OPTIONS = [
-  { value: 'STUDENT', label: 'Sinh viên' },
   { value: 'BTC', label: 'Ban tổ chức' },
-  { value: 'LECTURER', label: 'Giảng viên' },
   { value: 'ADMIN', label: 'Admin' },
 ];
 

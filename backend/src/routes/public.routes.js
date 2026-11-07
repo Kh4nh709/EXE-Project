@@ -8,6 +8,9 @@ const {
 const { issueScanTicket } = require('../controllers/checkin.controller');
 // Báo cáo được BTC chia sẻ bằng link công khai: người xem không có tài khoản.
 const { getSharedReport } = require('../controllers/report.controller');
+const {
+  getCertificate, getCertificateBackground, downloadCertificatePdf,
+} = require('../controllers/certificate.controller');
 const { getPublicCheckinPage, submitPublicCheckin } = require('../controllers/publicCheckin.controller');
 // Check-in bằng email + OTP, không cần đăng nhập (spec 2026-11-07-otp-checkin-design.md).
 const {
@@ -74,6 +77,11 @@ router.get('/events/:id', getPublicEvent);
 router.post('/events/:id/register', registerLimiter, registerPublic);
 
 router.get('/reports/:token', getSharedReport);
+
+// Chứng nhận xem qua link trong email — người tham gia không có tài khoản.
+router.get('/certificates/:token', getCertificate);
+router.get('/certificates/:token/background', getCertificateBackground);
+router.get('/certificates/:token/pdf', downloadCertificatePdf);
 
 // Link quét là công khai (ai có link đều quét được) — trần theo token+IP đủ rộng
 // cho một cửa đón vài trăm khách, nhưng chặn việc dò danh sách bằng tìm kiếm.

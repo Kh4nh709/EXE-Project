@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronLeft, CircleCheck, Info, LogIn } from 'lucide-react';
+import { ChevronLeft, CircleCheck, QrCode } from 'lucide-react';
 import { format } from 'date-fns';
-import { publicApi, eventApi } from '../../services/api';
-import { useAuth } from '../../contexts/AuthContext';
+import { publicApi } from '../../services/api';
 import Button from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Field, Input } from '../../components/ui/Input';
@@ -15,7 +14,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function EventRegister() {
   const { id } = useParams();
-  const { user, loading: authLoading } = useAuth();
 
   const [event, setEvent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -24,7 +22,7 @@ export default function EventRegister() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
-  const [form, setForm] = useState({ name: '', mssv: '', email: '', phone: '', class: '' });
+  const [form, setForm] = useState({ name: '', mssv: '', email: '', phone: '' });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   useEffect(() => {
@@ -34,35 +32,23 @@ export default function EventRegister() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Đã đăng nhập → điền sẵn thông tin tài khoản, người dùng không phải gõ lại.
-  useEffect(() => {
-    if (user) {
-      setForm((f) => ({ ...f, name: user.name || '', mssv: user.mssv || '', email: user.email || '' }));
-    }
-  }, [user]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (!user) {
-      if (form.name.trim().length < 2) return setError('Vui lòng nhập họ tên hợp lệ');
-      if (!form.mssv.trim()) return setError('Vui lòng nhập mã số sinh viên');
-      if (!EMAIL_RE.test(form.email.trim())) return setError('Email không hợp lệ');
-    }
+    if (form.name.trim().length < 2) return setError('Vui lòng nhập họ tên hợp lệ');
+    if (!form.mssv.trim()) return setError('Vui lòng nhập mã số sinh viên');
+    if (!EMAIL_RE.test(form.email.trim())) return setError('Email không hợp lệ');
 
     setSubmitting(true);
     try {
-      // Đã đăng nhập thì đăng ký bằng chính tài khoản đó, tránh lệch email/MSSV.
-      const { data } = user
-        ? await eventApi.register(id)
-        : await publicApi.register(id, form);
+      // Người tham gia không có tài khoản: chỉ ghi tên vào danh sách của sự kiện.
+      const { data } = await publicApi.register(id, form);
       setResult({
         alreadyRegistered: data.alreadyRegistered,
-        isNewAccount: data.isNewAccount,
         emailSent: data.emailSent,
-        name: data.data?.user?.name || user?.name || form.name,
-        email: data.data?.user?.email || user?.email || form.email,
+        name: data.data?.participant?.name || form.name,
+        email: data.data?.participant?.email || form.email,
       });
     } catch (err) {
       setError(err.response?.data?.message || 'Đăng ký thất bại. Vui lòng thử lại.');
@@ -72,7 +58,7 @@ export default function EventRegister() {
   };
 
   let body;
-  if (loading || authLoading) {
+  if (loading) {
     body = (
       <div className="space-y-4 rounded-2xl border border-border bg-surface p-5" aria-busy="true">
         <Skeleton className="h-5 w-3/5" /><Skeleton className="h-3 w-2/5" /><Skeleton className="h-3 w-1/2" /><Skeleton className="h-3 w-1/3" />
@@ -87,7 +73,7 @@ export default function EventRegister() {
       </div>
     );
   } else if (result) {
-    body = <SuccessCard event={event} result={result} loggedIn={Boolean(user)} />;
+    body = <SuccessCard event={event} result={result} />;
   } else {
     body = (
       <>
@@ -101,40 +87,23 @@ export default function EventRegister() {
         ) : (
           <Card
             title="Thông tin đăng ký"
-            sub={user
-              ? 'Bạn đang đăng nhập — hệ thống dùng thông tin tài khoản của bạn.'
-              : 'Chưa có tài khoản thì hệ thống tự tạo và gửi mật khẩu tạm qua email.'}
+            sub="Không cần tài khoản: đến ngày sự kiện bạn quét mã QR và nhập email này để điểm danh."
           >
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               <Field label="Họ và tên">
-                {(fid) => <Input id={fid} autoComplete="name" value={form.name} disabled={Boolean(user)} onChange={(e) => set('name', e.target.value)} />}
+                {(fid) => <Input id={fid} autoComplete="name" value={form.name} onChange={(e) => set('name', e.target.value)} />}
               </Field>
               <Field label="Mã số sinh viên">
-                {(fid) => <Input id={fid} placeholder="VD: SE170001" autoComplete="off" value={form.mssv} disabled={Boolean(user?.mssv)} onChange={(e) => set('mssv', e.target.value)} />}
+                {(fid) => <Input id={fid} placeholder="VD: SE170001" autoComplete="off" value={form.mssv} onChange={(e) => set('mssv', e.target.value)} />}
               </Field>
               <Field label="Email">
-                {(fid) => <Input id={fid} type="email" autoComplete="email" value={form.email} disabled={Boolean(user)} onChange={(e) => set('email', e.target.value)} />}
+                {(fid) => <Input id={fid} type="email" autoComplete="email" value={form.email} onChange={(e) => set('email', e.target.value)} />}
               </Field>
-              {!user && (
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <Field label="Lớp" optional>
-                    {(fid) => <Input id={fid} placeholder="VD: SE1701" value={form.class} onChange={(e) => set('class', e.target.value)} />}
-                  </Field>
-                  <Field label="Số điện thoại" optional>
-                    {(fid) => <Input id={fid} type="tel" placeholder="0901 234 567" autoComplete="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} />}
-                  </Field>
-                </div>
-              )}
+              <Field label="Số điện thoại" optional>
+                {(fid) => <Input id={fid} type="tel" placeholder="0901 234 567" autoComplete="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} />}
+              </Field>
               {error && <Banner tone="error" compact>{error}</Banner>}
               <Button type="submit" variant="primary" size="form" loading={submitting} className="w-full">Xác nhận đăng ký</Button>
-              {!user && (
-                <p className="text-center text-sm text-muted">
-                  {'Đã có tài khoản? '}
-                  <Link to={`/login?redirect=/dang-ky/${event.id}`} className="whitespace-nowrap font-medium text-foreground underline-offset-4 hover:underline">
-                    Đăng nhập để đăng ký nhanh
-                  </Link>
-                </p>
-              )}
             </form>
           </Card>
         )}
@@ -192,7 +161,7 @@ function EventSummary({ event }) {
   );
 }
 
-function SuccessCard({ event, result, loggedIn }) {
+function SuccessCard({ event, result }) {
   return (
     <section className="rounded-2xl border border-border bg-surface p-6">
       <div className="flex size-12 items-center justify-center rounded-full bg-success-bg text-success">
@@ -217,28 +186,22 @@ function SuccessCard({ event, result, loggedIn }) {
         />
       </div>
 
-      {result.isNewAccount && (
-        <div className="mt-4 flex gap-3 rounded-xl border border-border bg-background p-4">
-          <Info className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden="true" />
-          <p className="text-pretty text-sm/6 text-foreground">
-            Đã tạo tài khoản mới cho bạn, mật khẩu tạm được gửi tới <span className="font-medium">{result.email}</span>.
-          </p>
-        </div>
-      )}
+      <div className="mt-4 flex gap-3 rounded-xl border border-border bg-background p-4">
+        <QrCode className="mt-0.5 size-5 shrink-0 text-muted" aria-hidden="true" />
+        <p className="text-pretty text-sm/6 text-foreground">
+          Bạn không cần tài khoản. Đến ngày sự kiện, quét mã QR tại cửa vào rồi nhập{' '}
+          <span className="font-medium">{result.email}</span> để nhận mã xác minh điểm danh.
+        </p>
+      </div>
 
-      {result.emailSent === false && (
+      {result.emailSent === false && !result.alreadyRegistered && (
         <Banner tone="warning" compact className="mt-4">
-          Đã ghi nhận đăng ký nhưng chưa gửi được email — liên hệ Ban tổ chức để nhận thông tin đăng nhập.
+          Đã ghi nhận đăng ký nhưng chưa gửi được email xác nhận.
         </Banner>
       )}
 
-      <p className="mt-4 text-pretty text-sm/6 text-muted">Đến ngày sự kiện, đăng nhập rồi quét mã QR tại cửa vào để điểm danh.</p>
-
-      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <div className="mt-6 flex justify-end">
         <Button as={Link} to="/dang-ky" size="form">Đăng ký sự kiện khác</Button>
-        <Button as={Link} to={loggedIn ? '/dashboard' : '/login'} variant="primary" size="form" icon={LogIn}>
-          {loggedIn ? 'Về trang chính' : 'Đăng nhập'}
-        </Button>
       </div>
     </section>
   );

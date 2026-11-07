@@ -38,12 +38,11 @@ test('listMembers: non-owner gets 403', async () => {
   assert.strictEqual(res.status, 403);
 });
 
-test('searchUsersForEvent: non-owner gets 403', async () => {
+test('tìm người trong toàn hệ thống để thêm vào sự kiện đã bị bỏ (lộ danh sách của BTC khác)', async () => {
   stubMethod(prisma.user, 'findUnique', async () => LECTURER_USER);
-  stubMethod(prisma.event, 'findUnique', async () => ({ id: 'evt-1', createdById: 'btc-1' }));
 
   const res = await request(app).get('/api/events/evt-1/members/search?q=a').set('Authorization', `Bearer ${token}`);
-  assert.strictEqual(res.status, 403);
+  assert.notStrictEqual(res.status, 200);
 });
 
 test('exportAttendance: non-owner gets 403', async () => {

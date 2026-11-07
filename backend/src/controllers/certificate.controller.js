@@ -5,6 +5,7 @@ const {
   DEFAULT_FIELDS, normalizeFields, certificateValues, generateCertificateCode,
 } = require('../lib/certificateLayout');
 const { renderCertificatePdf, inspectTemplateImage } = require('../services/certificatePdf');
+const { certificateIdFromToken, certificateViewUrl } = require('../lib/certificateLink');
 const emailService = require('../services/email.service');
 
 const MIN_IMAGE_SIDE = 500;
@@ -163,8 +164,6 @@ async function previewPdf(req, res) {
 // Gửi email báo có chứng nhận. Mỗi chứng nhận được "giành" (PENDING/FAILED →
 // SENDING) trước khi gửi, nên BTC bấm cấp hai lần liền cũng không ai nhận 2 email.
 async function sendCertificateEmails(event, certs) {
-  const base = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : null;
-  const viewUrl = base ? `${base}/my-certificates` : null;
 
   const sendOne = async (cert) => {
     const claimed = await prisma.certificate.updateMany({
@@ -173,7 +172,10 @@ async function sendCertificateEmails(event, certs) {
     });
     if (claimed.count === 0) return;
     try {
-      await emailService.sendCertificateEmail(cert.user.email, cert.recipientName, event, { viewUrl });
+      // Mỗi người một link riêng (lib/certificateLink.js) — không cần tài khoản để xem.
+      await emailService.sendCertificateEmail(cert.user.email, cert.recipientName, event, {
+        viewUrl: certificateViewUrl(cert.id),
+      });
       await prisma.certificate.update({ where: { id: cert.id }, data: { emailStatus: 'SENT', emailSentAt: new Date() } });
     } catch (err) {
       console.error('Certificate email failed:', err.message);
@@ -279,34 +281,22 @@ async function revokeCertificate(req, res) {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Người nhận: xem / tải chứng nhận của mình
+// Xem / tải một chứng nhận: người nhận qua link trong email (/api/public/certificates/:token),
+// ADMIN hoặc người tạo sự kiện qua /api/certificates/:id.
 // ───────────────────────────────────────────────────────────────
 
-async function listMyCertificates(req, res) {
-  try {
-    const certs = await prisma.certificate.findMany({
-      where: { userId: req.user.id, event: { isActive: true } },
-      orderBy: { issuedAt: 'desc' },
-      select: {
-        id: true, code: true, issuedAt: true,
-        event: { select: { id: true, name: true, location: true, checkinOpen: true } },
-      },
-    });
-    return res.json({ success: true, data: certs });
-  } catch (err) {
-    return serverError(res, 'List my certificates', err);
-  }
-}
-
-// Chủ chứng nhận, ADMIN hoặc người tạo sự kiện. Người khác nhận 404 (không phải
-// 403) để không dò được id chứng nhận nào tồn tại.
+// Người khác nhận 404 (không phải 403) để không dò được id chứng nhận nào tồn tại.
 async function loadCertificateForView(req, res) {
-  const cert = await prisma.certificate.findUnique({
-    where: { id: req.params.id },
-    include: { event: { select: { id: true, name: true, checkinOpen: true, createdById: true, isActive: true } } },
-  });
+  const viaLink = req.params.token !== undefined;
+  const id = viaLink ? certificateIdFromToken(req.params.token) : req.params.id;
+  const cert = id
+    ? await prisma.certificate.findUnique({
+      where: { id },
+      include: { event: { select: { id: true, name: true, checkinOpen: true, createdById: true, isActive: true } } },
+    })
+    : null;
   const allowed = cert && cert.event.isActive && (
-    cert.userId === req.user.id || req.user.role === 'ADMIN' || cert.event.createdById === req.user.id
+    viaLink || req.user?.role === 'ADMIN' || cert.event.createdById === req.user?.id
   );
   if (!allowed) {
     res.status(404).json({ success: false, error: 'CERTIFICATE_NOT_FOUND', message: 'Không tìm thấy chứng nhận' });
@@ -378,6 +368,6 @@ async function downloadCertificatePdf(req, res) {
 module.exports = {
   getCertificateSetup, getTemplateImage, uploadTemplateImage, saveTemplateFields, deleteTemplate,
   previewPdf, issueCertificates, listEventCertificates, revokeCertificate,
-  listMyCertificates, getCertificate, getCertificateBackground, downloadCertificatePdf,
+  getCertificate, getCertificateBackground, downloadCertificatePdf,
   sendCertificateEmails,
 };

@@ -58,8 +58,6 @@ api.interceptors.response.use(
 export const authApi = {
   login: (data) => api.post('/api/auth/login', { ...data, deviceId: getDeviceId(), deviceInfo: getDeviceInfo() }),
   verifyOtp: (data) => api.post('/api/auth/verify-otp', { ...data, deviceId: getDeviceId(), deviceInfo: getDeviceInfo() }),
-  requestLoginOtp: (data) => api.post('/api/auth/login-otp/request', { ...data, deviceId: getDeviceId() }),
-  loginWithOtp: (data) => api.post('/api/auth/login-otp/verify', { ...data, deviceId: getDeviceId(), deviceInfo: getDeviceInfo() }),
   forgotPassword: (data) => api.post('/api/auth/forgot-password', { ...data, deviceId: getDeviceId() }),
   resetPassword: (data) => api.post('/api/auth/reset-password', data),
   changePassword: (data) => api.post('/api/auth/change-password', data),
@@ -81,13 +79,21 @@ export const eventApi = {
   // Gỡ lượt check-in (kèm check-out) của một người — về lại "Đã đăng ký".
   undoCheckin: (id, userId) => api.delete(`/api/events/${id}/attendance/${userId}/checkin`),
   listMembers: (id, params) => api.get(`/api/events/${id}/members`, { params }),
-  searchMembers: (id, q) => api.get(`/api/events/${id}/members/search`, { params: { q } }),
-  addMembers: (id, userIds) => api.post(`/api/events/${id}/members`, { userIds }),
+  // Người tham gia không có tài khoản: nhập bằng email + họ tên (MSSV, SĐT tuỳ chọn).
+  // participants: [{ email, name, mssv?, phone? }] → { added, alreadyIn, created, skipped[] }.
+  addMembers: (id, participants) => api.post(`/api/events/${id}/members`, { participants }),
+  importMembers: (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`/api/events/${id}/members/import`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
   listClasses: (id) => api.get(`/api/events/${id}/classes`),
-  addMembersByClass: (id, classes) => api.post(`/api/events/${id}/members/by-class`, { classes }),
+  addMembersByClass: (id, classIds) => api.post(`/api/events/${id}/members/by-class`, { classIds }),
   removeMember: (id, userId) => api.delete(`/api/events/${id}/members/${userId}`),
-  // Người dùng đã đăng nhập tự ghi tên vào danh sách tham gia.
-  register: (id) => api.post(`/api/events/${id}/register`),
+  // Ảnh khuôn mặt của một người trong danh sách (cho kiosk) — data: { embedding, thumbnail }.
+  getMemberFace: (id, userId) => api.get(`/api/events/${id}/members/${userId}/face-profile`),
+  setMemberFace: (id, userId, data) => api.put(`/api/events/${id}/members/${userId}/face-profile`, data),
+  deleteMemberFace: (id, userId) => api.delete(`/api/events/${id}/members/${userId}/face-profile`),
   // Nhắc lịch qua email — BTC gửi thủ công (không có nhắc tự động).
   getReminders: (id) => api.get(`/api/events/${id}/reminders`),
   sendReminder: (id, note) => api.post(`/api/events/${id}/reminders/send`, { note }),
@@ -101,8 +107,13 @@ export const classApi = {
   update: (id, data) => api.put(`/api/classes/${id}`, data),
   remove: (id) => api.delete(`/api/classes/${id}`),
   listMembers: (id, params) => api.get(`/api/classes/${id}/members`, { params }),
-  searchAssignable: (id, params) => api.get(`/api/classes/${id}/members/search`, { params }),
-  addMembers: (id, userIds) => api.post(`/api/classes/${id}/members`, { userIds }),
+  // Danh sách lớp: nhập bằng email + họ tên như danh sách sự kiện.
+  addMembers: (id, participants) => api.post(`/api/classes/${id}/members`, { participants }),
+  importMembers: (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post(`/api/classes/${id}/members/import`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
   removeMembers: (id, userIds) => api.post(`/api/classes/${id}/members/remove`, { userIds }),
   listSessions: (id) => api.get(`/api/classes/${id}/sessions`),
   createSession: (id, data) => api.post(`/api/classes/${id}/sessions`, data),
@@ -132,11 +143,6 @@ export const checkinApi = {
 // Check-in bằng khuôn mặt. Embedding luôn do trình duyệt tính (pages/face/faceEngine.js);
 // server chỉ lưu/so vector.
 export const faceApi = {
-  // Sinh viên tự quản lý khuôn mặt của mình.
-  getMine: () => api.get('/api/me/face-profile'),
-  saveMine: (data) => api.post('/api/me/face-profile', { ...data, consent: true }),
-  consentMine: () => api.post('/api/me/face-profile/consent'),
-  deleteMine: () => api.delete('/api/me/face-profile'),
   // Admin import ảnh thẻ theo MSSV — items: [{ mssv, embedding, thumbnail }].
   // overwrite = đè cả ảnh sinh viên đã tự chụp (mặc định bỏ qua những người đó).
   importProfiles: (items, overwrite = false) => api.post('/api/admin/face-profiles/import', { items, overwrite }),
@@ -159,7 +165,6 @@ export const adminApi = {
   deleteUser: (id) => api.delete(`/api/admin/users/${id}`),
   resetPassword: (id, data) => api.post(`/api/admin/users/${id}/reset-password`, data),
   resetDevice: (id) => api.post(`/api/admin/users/${id}/reset-device`),
-  importStudents: (formData) => api.post('/api/admin/users/import', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
   // Thao tác hàng loạt — payload luôn có userIds; response luôn { updated, skipped[] }.
   bulkUpdate: (userIds, patch) => api.post('/api/admin/users/bulk/update', { userIds, ...patch }),
   bulkResetPassword: (userIds) => api.post('/api/admin/users/bulk/reset-password', { userIds }),
@@ -231,11 +236,15 @@ export const certificateApi = {
   listIssued: (eventId) => api.get(`/api/events/${eventId}/certificates`),
   revoke: (eventId, certId) => api.delete(`/api/events/${eventId}/certificates/${certId}`),
 
-  // Người nhận
-  mine: () => api.get('/api/certificates/mine'),
+  // BTC xem một chứng nhận đã cấp
   get: (id) => api.get(`/api/certificates/${id}`),
   background: (id) => api.get(`/api/certificates/${id}/background`, { responseType: 'blob' }),
   pdf: (id) => api.get(`/api/certificates/${id}/pdf`, { responseType: 'blob' }),
+
+  // Người nhận: link riêng trong email, không cần đăng nhập (lib/certificateLink.js).
+  getByLink: (token) => api.get(`/api/public/certificates/${token}`),
+  backgroundByLink: (token) => api.get(`/api/public/certificates/${token}/background`, { responseType: 'blob' }),
+  pdfByLink: (token) => api.get(`/api/public/certificates/${token}/pdf`, { responseType: 'blob' }),
 };
 
 // Sự kiện thiệp mời — BTC (ADMIN hoặc người tạo sự kiện). Khách mời là khách ngoài,

@@ -1,7 +1,5 @@
-const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const prisma = require('../lib/prisma');
-const { addUsersToEvent } = require('../lib/eventMembership');
+const { addParticipantsToEvent } = require('../lib/participants');
 const emailService = require('../services/email.service');
 
 // Các trường sự kiện an toàn để lộ ra endpoint công khai (KHÔNG kèm lat/lng/radius
@@ -21,10 +19,6 @@ const PUBLIC_EVENT_FIELDS = {
   _count: { select: { eventMembers: true } },
 };
 
-function generateTempPassword() {
-  return 'Fpt@' + crypto.randomInt(100000, 1000000).toString();
-}
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function normalizeInput(body = {}) {
@@ -34,7 +28,6 @@ function normalizeInput(body = {}) {
     mssv: str(body.mssv).toUpperCase(),
     email: str(body.email).toLowerCase(),
     phone: str(body.phone),
-    userClass: str(body.class),
   };
 }
 
@@ -50,11 +43,6 @@ function registrationWindowError(event, now = new Date()) {
     return 'Sự kiện đã đóng cổng đăng ký.';
   }
   return null;
-}
-
-async function joinEvent(eventId, userId) {
-  const { added } = await addUsersToEvent(eventId, [userId]);
-  return { alreadyRegistered: added === 0 };
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -108,11 +96,11 @@ async function getPublicEvent(req, res) {
   }
 }
 
-// Đăng ký tham gia sự kiện bằng form (họ tên / MSSV / email).
-// Chưa có tài khoản → tạo mới kèm mật khẩu tạm gửi qua email.
+// Đăng ký tham gia sự kiện bằng form (họ tên / MSSV / email). Người tham gia không có
+// tài khoản (lib/participants.js): chỉ thêm vào danh sách của sự kiện, không mật khẩu.
 async function registerPublic(req, res) {
   try {
-    const { name, mssv, email, phone, userClass } = normalizeInput(req.body);
+    const { name, mssv, email, phone } = normalizeInput(req.body);
 
     if (!name || name.length < 2) {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập họ tên hợp lệ' });
@@ -125,7 +113,7 @@ async function registerPublic(req, res) {
     }
 
     const event = await prisma.event.findFirst({
-      where: { id: req.params.id, isActive: true },
+      where: { id: req.params.id, isActive: true, kind: 'STANDARD' },
       select: { id: true, name: true, location: true, checkinOpen: true, checkinClose: true, allowRegistration: true },
     });
     if (!event) {
@@ -137,96 +125,32 @@ async function registerPublic(req, res) {
       return res.status(400).json({ success: false, message: windowError });
     }
 
-    // Khớp tài khoản theo email HOẶC MSSV. Nếu hai định danh trỏ về hai tài khoản
-    // khác nhau thì dữ liệu nhập bị lệch → yêu cầu người dùng kiểm tra lại.
-    const matches = await prisma.user.findMany({
-      where: { OR: [{ email }, { mssv }] },
-      select: { id: true, email: true, mssv: true, name: true, isActive: true },
-    });
-
-    if (matches.length > 1) {
+    const result = await addParticipantsToEvent(event.id, [{ email, name, mssv, phone }]);
+    if (result.skipped?.length) {
       return res.status(409).json({
         success: false,
-        message: 'Email và MSSV đang thuộc hai tài khoản khác nhau. Vui lòng kiểm tra lại hoặc liên hệ Ban tổ chức.',
+        message: `${result.skipped[0].reason}. Vui lòng kiểm tra lại hoặc liên hệ Ban tổ chức.`,
       });
     }
+    const alreadyRegistered = result.added === 0;
 
-    let user = matches[0] || null;
-    let isNewAccount = false;
-    let tempPassword = null;
-
-    if (user) {
-      if (!user.isActive) {
-        return res.status(403).json({
-          success: false,
-          message: 'Tài khoản của bạn đang bị khoá. Vui lòng liên hệ Ban tổ chức.',
-        });
+    let emailSent = false;
+    if (!alreadyRegistered) {
+      try {
+        await emailService.sendEventRegistrationEmail(email, name, event);
+        emailSent = true;
+      } catch (emailErr) {
+        console.error('Failed to send registration email:', emailErr);
       }
-      if (user.mssv && user.mssv !== mssv) {
-        return res.status(409).json({
-          success: false,
-          message: 'Email này đã đăng ký với một MSSV khác. Vui lòng kiểm tra lại.',
-        });
-      }
-      if (user.email !== email) {
-        return res.status(409).json({
-          success: false,
-          message: 'MSSV này đã đăng ký với một email khác. Vui lòng kiểm tra lại.',
-        });
-      }
-      // Bổ sung thông tin còn thiếu, KHÔNG ghi đè dữ liệu sẵn có của tài khoản.
-      const patch = {
-        ...(user.mssv ? {} : { mssv }),
-        ...(phone ? { phone } : {}),
-        ...(userClass ? { class: userClass } : {}),
-      };
-      if (Object.keys(patch).length) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: patch,
-          select: { id: true, email: true, mssv: true, name: true, isActive: true },
-        });
-      }
-    } else {
-      isNewAccount = true;
-      tempPassword = generateTempPassword();
-      const passwordHash = await bcrypt.hash(tempPassword, 10);
-      user = await prisma.user.create({
-        data: {
-          name,
-          mssv,
-          email,
-          phone: phone || null,
-          class: userClass || null,
-          role: 'STUDENT',
-          passwordHash,
-          isFirstLogin: true,
-        },
-        select: { id: true, email: true, mssv: true, name: true, isActive: true },
-      });
-    }
-
-    const { alreadyRegistered } = await joinEvent(event.id, user.id);
-
-    let emailSent = true;
-    try {
-      await emailService.sendEventRegistrationEmail(user.email, user.name, event, {
-        mssv: user.mssv,
-        tempPassword,
-      });
-    } catch (emailErr) {
-      emailSent = false;
-      console.error('Failed to send registration email:', emailErr);
     }
 
     return res.status(alreadyRegistered ? 200 : 201).json({
       success: true,
       alreadyRegistered,
-      isNewAccount,
       emailSent,
       data: {
         event: { id: event.id, name: event.name, location: event.location, checkinOpen: event.checkinOpen },
-        user: { id: user.id, name: user.name, mssv: user.mssv, email: user.email },
+        participant: { name, email },
       },
       message: alreadyRegistered
         ? 'Bạn đã có tên trong danh sách tham gia sự kiện này.'
@@ -238,38 +162,4 @@ async function registerPublic(req, res) {
   }
 }
 
-// ───────────────────────────────────────────────────────────────
-// Người dùng đã đăng nhập tự đăng ký tham gia
-// ───────────────────────────────────────────────────────────────
-
-async function registerSelf(req, res) {
-  try {
-    const event = await prisma.event.findFirst({
-      where: { id: req.params.id, isActive: true },
-      select: { id: true, name: true, location: true, checkinOpen: true, checkinClose: true, allowRegistration: true },
-    });
-    if (!event) {
-      return res.status(404).json({ success: false, message: 'Không tìm thấy sự kiện' });
-    }
-
-    const windowError = registrationWindowError(event);
-    if (windowError) {
-      return res.status(400).json({ success: false, message: windowError });
-    }
-
-    const { alreadyRegistered } = await joinEvent(event.id, req.user.id);
-
-    return res.json({
-      success: true,
-      alreadyRegistered,
-      message: alreadyRegistered
-        ? 'Bạn đã có tên trong danh sách tham gia sự kiện này.'
-        : 'Đăng ký tham gia sự kiện thành công!',
-    });
-  } catch (err) {
-    console.error('Self registration error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-}
-
-module.exports = { listOpenEvents, getPublicEvent, registerPublic, registerSelf };
+module.exports = { listOpenEvents, getPublicEvent, registerPublic };

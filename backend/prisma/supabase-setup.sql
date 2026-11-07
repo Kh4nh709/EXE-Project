@@ -205,6 +205,25 @@ ALTER TABLE "attendance_events"
 CREATE UNIQUE INDEX IF NOT EXISTS "attendance_events_scannerToken_key"
   ON "attendance_events"("scannerToken");
 
+-- Danh sách của lớp học (thay cho ghép theo chuỗi attendance_users.class).
+CREATE TABLE IF NOT EXISTS "attendance_class_members" (
+  "id"        TEXT        NOT NULL,
+  "classId"   TEXT        NOT NULL,
+  "userId"    TEXT        NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT "attendance_class_members_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "attendance_class_members_classId_fkey"
+    FOREIGN KEY ("classId") REFERENCES "attendance_classes"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "attendance_class_members_userId_fkey"
+    FOREIGN KEY ("userId") REFERENCES "attendance_users"("id")
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "attendance_class_members_classId_userId_key"
+    UNIQUE ("classId", "userId")
+);
+CREATE INDEX IF NOT EXISTS "attendance_class_members_userId_idx"
+  ON "attendance_class_members"("userId");
+
 -- Bảng whitelist thành viên sự kiện
 CREATE TABLE IF NOT EXISTS "attendance_event_members" (
   "id"      TEXT NOT NULL,

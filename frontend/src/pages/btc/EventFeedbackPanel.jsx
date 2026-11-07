@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChartColumn, Ellipsis, EyeOff, FileText, Link2, ListPlus, Lock, Pencil, Play, Square, Trash2 } from 'lucide-react';
+import { ChartColumn, Ellipsis, EyeOff, FileText, ListPlus, Lock, Pencil, Play, Square, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { feedbackApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -147,16 +147,6 @@ export default function EventFeedbackPanel({ eventId, eventName, onUnavailable }
     run('remove', () => feedbackApi.removeEventForm(eventId), 'Đã gỡ form đánh giá');
   };
 
-  const feedbackUrl = `${window.location.origin}/feedback/${eventId}`;
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(feedbackUrl);
-      toast.success('Đã copy link đánh giá');
-    } catch {
-      toast(feedbackUrl, { duration: 8000 });
-    }
-  };
-
   const pct = eligibleCount ? Math.round((responseCount / eligibleCount) * 100) : 0;
   const answered = eligibleCount > 0
     ? `${responseCount}/${eligibleCount} người đã check-out đã trả lời${` (${pct}%)`}`
@@ -202,6 +192,9 @@ export default function EventFeedbackPanel({ eventId, eventName, onUnavailable }
             {form.template && <> · từ mẫu “{form.template.name}”</>}
             {' · '}{answered}
           </p>
+          <p className="mt-1 text-pretty text-xs text-muted">
+            Người tham gia thấy form ngay sau khi quét mã QR check-out (không cần tài khoản).
+          </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
             {canWrite && (form.isOpen ? (
@@ -210,7 +203,6 @@ export default function EventFeedbackPanel({ eventId, eventName, onUnavailable }
               <Button icon={Play} loading={busy === 'open'} onClick={() => setOpen(true)}>Mở form</Button>
             ))}
             <Button icon={ChartColumn} onClick={() => setResultsOpen(true)}>Xem kết quả</Button>
-            <Button icon={Link2} onClick={copyLink}>Sao chép link đánh giá</Button>
             {canWrite && !locked && (
               <Dropdown align="end" ariaLabel="Thêm thao tác" trigger={<OutlineIconButton icon={Ellipsis} label="Thêm thao tác" />}>
                 <MenuGroup><MenuItem icon={Pencil} onSelect={openEditor}>Sửa câu hỏi</MenuItem></MenuGroup>

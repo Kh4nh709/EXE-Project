@@ -263,8 +263,8 @@ export default function FaceCheckin() {
                 </Banner>
               )}
               {gallery && gallery.withFace === 0 && (
-                <Banner tone="info" title="Chưa ai trong danh sách bật check-in bằng khuôn mặt">
-                  Sinh viên tự đăng ký ở mục “Khuôn mặt” trong tài khoản, hoặc đồng ý dùng ảnh nhà trường đã import.
+                <Banner tone="info" title="Chưa ai trong danh sách có ảnh khuôn mặt">
+                  Mở Danh sách tham gia của sự kiện và bấm biểu tượng khuôn mặt cạnh từng người để tải ảnh lên.
                 </Banner>
               )}
 

@@ -1,6 +1,5 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const XLSX = require('xlsx');
 const prisma = require('../lib/prisma');
 const emailService = require('../services/email.service');
 const { profileStatus } = require('../lib/faceProfile');
@@ -15,6 +14,12 @@ const {
 function generateTempPassword() {
   return 'Fpt@' + crypto.randomInt(100000, 1000000).toString();
 }
+
+// Chỉ nhân sự có tài khoản đăng nhập. Người tham gia (STUDENT) không có tài khoản —
+// BTC nhập họ trong từng sự kiện/lớp (lib/participants.js), admin không tạo, không
+// đặt mật khẩu và không đổi ai thành STUDENT được.
+const STAFF_ROLES = ['ADMIN', 'BTC', 'LECTURER'];
+const NOT_STAFF_MESSAGE = 'Người tham gia không có tài khoản — hãy thêm họ vào danh sách của sự kiện hoặc lớp học.';
 
 async function listUsers(req, res) {
   try {
@@ -32,7 +37,8 @@ async function listUsers(req, res) {
           { email: { contains: search, mode: 'insensitive' } },
         ],
       }),
-      ...(role && { role }),
+      // Mặc định chỉ liệt kê tài khoản nhân sự; role=STUDENT để xem người tham gia.
+      role: role || { not: 'STUDENT' },
       ...(status === 'active' && { isActive: true }),
       ...(status === 'locked' && { isActive: false }),
     };
@@ -61,7 +67,11 @@ async function listUsers(req, res) {
 
 async function createUser(req, res) {
   try {
-    const { mssv, email, name, role, class: userClass, faculty, phone } = req.body;
+    const { mssv, email, name, class: userClass, faculty, phone } = req.body;
+    const role = req.body.role || 'BTC';
+    if (!STAFF_ROLES.includes(role)) {
+      return res.status(400).json({ success: false, error: 'NOT_STAFF', message: NOT_STAFF_MESSAGE });
+    }
 
     const existing = await prisma.user.findFirst({
       where: { OR: [{ email }, ...(mssv ? [{ mssv }] : [])] },
@@ -74,7 +84,7 @@ async function createUser(req, res) {
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 
     const user = await prisma.user.create({
-      data: { mssv, email, name, role: role || 'STUDENT', class: userClass, faculty, phone, passwordHash, isFirstLogin: true },
+      data: { mssv, email, name, role, class: userClass, faculty, phone, passwordHash, isFirstLogin: true },
       select: { id: true, mssv: true, email: true, name: true, role: true },
     });
 
@@ -93,6 +103,9 @@ async function createUser(req, res) {
 async function updateUser(req, res) {
   try {
     const { mssv, email, name, role, class: userClass, faculty, phone, isActive } = req.body;
+    if (role !== undefined && !STAFF_ROLES.includes(role)) {
+      return res.status(400).json({ success: false, error: 'NOT_STAFF', message: NOT_STAFF_MESSAGE });
+    }
 
     // Khi đổi email/mssv: kiểm tra trùng với user KHÁC
     if (email !== undefined || mssv !== undefined) {
@@ -189,10 +202,14 @@ async function resetPassword(req, res) {
 
     const target = await prisma.user.findUnique({
       where: { id: req.params.id },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, role: true },
     });
     if (!target) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
+    }
+    // Đặt mật khẩu cho người tham gia = cấp cho họ một tài khoản đăng nhập.
+    if (target.role === 'STUDENT') {
+      return res.status(400).json({ success: false, error: 'NOT_STAFF', message: NOT_STAFF_MESSAGE });
     }
 
     const password = newPassword || generateTempPassword();
@@ -240,73 +257,6 @@ async function resetDeviceBinding(req, res) {
   }
 }
 
-async function importStudents(req, res) {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'Chưa upload file' });
-    }
-
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
-
-    if (!rows.length) {
-      return res.status(400).json({ success: false, message: 'File trống hoặc không đúng định dạng' });
-    }
-
-    const results = { success: 0, skipped: 0, errors: [] };
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const mssv = String(row['MSSV'] || row['mssv'] || '').trim();
-      const name = String(row['Họ tên'] || row['ho_ten'] || row['name'] || '').trim();
-      const email = String(row['Email'] || row['email'] || '').trim().toLowerCase();
-      const userClass = String(row['Lớp'] || row['lop'] || row['class'] || '').trim();
-      const faculty = String(row['Khoa'] || row['faculty'] || '').trim();
-
-      if (!mssv || !name || !email) {
-        results.errors.push({ row: i + 2, message: 'Thiếu MSSV, Họ tên hoặc Email' });
-        continue;
-      }
-
-      try {
-        const existing = await prisma.user.findFirst({
-          where: { OR: [{ mssv }, { email }] },
-        });
-
-        if (existing) {
-          results.skipped++;
-          continue;
-        }
-
-        const tempPassword = generateTempPassword();
-        const passwordHash = await bcrypt.hash(tempPassword, 10);
-
-        await prisma.user.create({
-          data: { mssv, email, name, class: userClass || null, faculty: faculty || null, role: 'STUDENT', passwordHash, isFirstLogin: true },
-        });
-
-        try {
-          await emailService.sendWelcomeEmail(email, name, mssv, tempPassword);
-        } catch {}
-
-        results.success++;
-      } catch (rowErr) {
-        results.errors.push({ row: i + 2, message: 'Lỗi khi tạo tài khoản' });
-      }
-    }
-
-    return res.json({
-      success: true,
-      message: `Import hoàn tất: ${results.success} thành công, ${results.skipped} bỏ qua, ${results.errors.length} lỗi`,
-      results,
-    });
-  } catch (err) {
-    console.error('Import error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi đọc file' });
-  }
-}
-
 async function getStats(req, res) {
   try {
     const [totalUsers, totalEvents, totalStudents, totalCheckins] = await Promise.all([
@@ -331,7 +281,7 @@ async function getStats(req, res) {
 // thao tác hàng loạt "thành công một phần" là chuyện bình thường (người đã tạo
 // sự kiện thì không xoá được), không phải lỗi để trả 4xx.
 
-const ROLES = ['STUDENT', 'BTC', 'LECTURER', 'ADMIN'];
+const ROLES = STAFF_ROLES;
 
 // Gửi email theo lô nhỏ: Brevo giới hạn tốc độ và 50 request song song từ
 // Render free tier hay bị nghẽn. 5 một lượt là đủ nhanh mà vẫn an toàn.
@@ -396,7 +346,7 @@ async function bulkResetPasswords(req, res) {
 
     const targets = ids.length
       ? await prisma.user.findMany({
-          where: { id: { in: ids } },
+          where: { id: { in: ids }, role: { not: 'STUDENT' } },
           select: { id: true, name: true, email: true },
         })
       : [];
@@ -522,7 +472,6 @@ module.exports = {
   deleteUser,
   resetPassword,
   resetDeviceBinding,
-  importStudents,
   getStats,
   bulkUpdateUsers,
   bulkResetPasswords,

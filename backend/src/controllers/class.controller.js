@@ -3,6 +3,7 @@ const { addUsersToEvent } = require('../lib/eventMembership');
 const { parseEventDates, parseGateState } = require('../lib/parseOptionalDate');
 const { gateSummary } = require('../lib/attendanceGate');
 const { fmtDate } = require('../lib/datetime');
+const { addParticipantsToClass, parseSheet, importSummary } = require('../lib/participants');
 
 const CLASS_NOT_FOUND = { success: false, message: 'Không tìm thấy lớp' };
 
@@ -22,23 +23,10 @@ async function listClasses(req, res) {
     const classes = await prisma.class.findMany({
       where,
       orderBy: { name: 'asc' },
-      include: { createdBy: { select: { name: true } } },
+      include: { createdBy: { select: { name: true } }, _count: { select: { members: true } } },
     });
 
-    if (classes.length === 0) {
-      return res.json({ success: true, data: [] });
-    }
-
-    // Sĩ số hiện tại — đếm theo User.class (chuỗi) trùng tên lớp, không phải
-    // FK, nên gộp 1 lượt groupBy thay vì N truy vấn cho N lớp.
-    const counts = await prisma.user.groupBy({
-      by: ['class'],
-      where: { isActive: true, class: { in: classes.map((c) => c.name) } },
-      _count: { _all: true },
-    });
-    const countByName = Object.fromEntries(counts.map((c) => [c.class, c._count._all]));
-
-    const data = classes.map((c) => ({ ...c, memberCount: countByName[c.name] || 0 }));
+    const data = classes.map(({ _count, ...c }) => ({ ...c, memberCount: _count.members }));
     return res.json({ success: true, data });
   } catch (err) {
     console.error('List classes error:', err);
@@ -76,7 +64,7 @@ async function getClass(req, res) {
     const cls = await loadClass(req.params.id);
     if (!cls) return res.status(404).json(CLASS_NOT_FOUND);
 
-    const memberCount = await prisma.user.count({ where: { isActive: true, class: cls.name } });
+    const memberCount = await prisma.classMember.count({ where: { classId: cls.id } });
 
     return res.json({ success: true, data: { ...cls, memberCount } });
   } catch (err) {
@@ -85,8 +73,7 @@ async function getClass(req, res) {
   }
 }
 
-// Đổi tên lớp phải lan sang mọi User.class đang mang tên cũ, nếu không danh sách
-// lớp và dữ liệu thành viên thật sẽ lệch nhau ngay lập tức.
+// Thành viên lớp nằm ở ClassMember (theo id lớp) nên đổi tên lớp không phải sửa gì thêm.
 async function updateClass(req, res) {
   try {
     const cls = await loadClass(req.params.id);
@@ -107,21 +94,16 @@ async function updateClass(req, res) {
       }
     }
 
-    const [updated] = await prisma.$transaction([
-      prisma.class.update({
-        where: { id: cls.id },
-        data: {
-          ...(name && name !== cls.name && { name }),
-          ...(description !== undefined && { description: description ? String(description).trim() : null }),
-          ...(isActive !== undefined && { isActive: Boolean(isActive) }),
-        },
-      }),
-      ...(name && name !== cls.name
-        ? [prisma.user.updateMany({ where: { class: cls.name }, data: { class: name } })]
-        : []),
-    ]);
+    const updated = await prisma.class.update({
+      where: { id: cls.id },
+      data: {
+        ...(name && name !== cls.name && { name }),
+        ...(description !== undefined && { description: description ? String(description).trim() : null }),
+        ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+      },
+    });
 
-    const memberCount = await prisma.user.count({ where: { isActive: true, class: updated.name } });
+    const memberCount = await prisma.classMember.count({ where: { classId: updated.id } });
 
     return res.json({ success: true, data: { ...updated, memberCount } });
   } catch (err) {
@@ -130,20 +112,12 @@ async function updateClass(req, res) {
   }
 }
 
-// Xoá lớp chỉ khi không còn thành viên nào mang tên lớp đó — tránh âm thầm để
-// lại một nhóm sinh viên "lớp ma" không còn xuất hiện trong trang quản lý lớp.
+// Xoá lớp xoá luôn danh sách của lớp (cascade). Các buổi điểm danh đã tạo vẫn giữ
+// danh sách và lịch sử riêng của chúng (Event.classId → SetNull).
 async function deleteClass(req, res) {
   try {
     const cls = await loadClass(req.params.id);
     if (!cls) return res.status(404).json(CLASS_NOT_FOUND);
-
-    const memberCount = await prisma.user.count({ where: { class: cls.name } });
-    if (memberCount > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Lớp còn ${memberCount} thành viên. Hãy chuyển hoặc xoá khỏi lớp trước khi xoá.`,
-      });
-    }
 
     await prisma.class.delete({ where: { id: cls.id } });
     return res.json({ success: true, message: 'Đã xoá lớp' });
@@ -166,110 +140,75 @@ async function listMembers(req, res) {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {
-      class: cls.name,
+      classId: cls.id,
       ...(search && {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { mssv: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-        ],
+        user: {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { mssv: { contains: search, mode: 'insensitive' } },
+            { email: { contains: search, mode: 'insensitive' } },
+          ],
+        },
       }),
     };
 
-    const [members, total] = await Promise.all([
-      prisma.user.findMany({
+    const [rows, total] = await Promise.all([
+      prisma.classMember.findMany({
         where,
         skip,
         take: parseInt(limit),
-        select: { id: true, mssv: true, name: true, email: true, isActive: true, role: true },
-        orderBy: { name: 'asc' },
+        select: { user: { select: { id: true, mssv: true, name: true, email: true, isActive: true } } },
+        orderBy: { user: { name: 'asc' } },
       }),
-      prisma.user.count({ where }),
+      prisma.classMember.count({ where }),
     ]);
 
-    return res.json({ success: true, data: members, total, page: parseInt(page), limit: parseInt(limit) });
+    return res.json({ success: true, data: rows.map((r) => r.user), total, page: parseInt(page), limit: parseInt(limit) });
   } catch (err) {
     console.error('List class members error:', err);
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 }
 
-// Tìm người CHƯA thuộc lớp này để thêm vào — gồm cả người đang ở lớp khác,
-// vì thêm vào lớp mới sẽ chuyển họ sang (một người chỉ thuộc một lớp).
-//
-// `unassignedOnly=1` chỉ liệt kê người CHƯA có lớp nào — đúng nhóm mà BTC hay
-// phải sửa tay từng người (import Excel thiếu cột Lớp, đăng ký công khai không
-// điền lớp...). Bật cờ này thì được liệt kê cả khi chưa gõ từ khoá tìm kiếm,
-// vì mục đích là "cho tôi thấy hết những người còn thiếu" chứ không phải tra
-// một cái tên cụ thể.
-async function searchAssignable(req, res) {
-  try {
-    const cls = await loadClass(req.params.id);
-    if (!cls) return res.status(404).json(CLASS_NOT_FOUND);
-
-    const { q } = req.query;
-    const unassignedOnly = req.query.unassignedOnly === '1' || req.query.unassignedOnly === 'true';
-
-    if (!unassignedOnly && (!q || !q.trim())) {
-      return res.json({ success: true, data: [] });
-    }
-
-    const users = await prisma.user.findMany({
-      where: {
-        isActive: true,
-        role: 'STUDENT',
-        class: unassignedOnly ? null : { not: cls.name },
-        ...(q && q.trim() && {
-          OR: [
-            { name: { contains: q, mode: 'insensitive' } },
-            { mssv: { contains: q, mode: 'insensitive' } },
-            { email: { contains: q, mode: 'insensitive' } },
-          ],
-        }),
-      },
-      select: { id: true, mssv: true, name: true, email: true, class: true },
-      take: 50,
-      orderBy: { name: 'asc' },
-    });
-
-    return res.json({ success: true, data: users });
-  } catch (err) {
-    console.error('Search assignable users error:', err);
-    return res.status(500).json({ success: false, message: 'Lỗi server' });
-  }
-}
-
-// Gán nhiều người vào lớp cùng lúc — vừa dùng để thêm thành viên mới, vừa dùng
-// để "sửa" hàng loạt cho người thiếu/sai lớp (chuyển từ lớp cũ hoặc từ trống
-// sang lớp này), vì mỗi người chỉ có đúng một giá trị class tại một thời điểm.
+// Nhập người vào danh sách lớp bằng email + họ tên (MSSV, SĐT tuỳ chọn) — người
+// tham gia không có tài khoản, xem lib/participants.js.
 async function addMembers(req, res) {
   try {
     const cls = await loadClass(req.params.id);
     if (!cls) return res.status(404).json(CLASS_NOT_FOUND);
 
-    const userIds = Array.isArray(req.body?.userIds) ? [...new Set(req.body.userIds)] : [];
-    if (userIds.length === 0) {
-      return res.status(400).json({ success: false, message: 'Chưa chọn người dùng để thêm' });
-    }
+    const result = await addParticipantsToClass(cls.id, req.body?.participants);
+    if (result.error) return res.status(400).json({ success: false, message: result.error });
 
-    const result = await prisma.user.updateMany({
-      where: { id: { in: userIds } },
-      data: { class: cls.name },
-    });
-
-    return res.json({
-      success: true,
-      updated: result.count,
-      message: `Đã gán ${result.count} người vào lớp ${cls.name}`,
-    });
+    return res.json({ success: true, ...result, message: importSummary(result) });
   } catch (err) {
     console.error('Add class members error:', err);
     return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 }
 
-// Gỡ khỏi lớp = xoá giá trị class (không xoá tài khoản). Chỉ tác động người
-// ĐANG thuộc đúng lớp này, tránh vô tình gỡ nhầm nếu id đã bị chuyển lớp khác.
+async function importMembers(req, res) {
+  try {
+    const cls = await loadClass(req.params.id);
+    if (!cls) return res.status(404).json(CLASS_NOT_FOUND);
+    if (!req.file?.buffer?.length) {
+      return res.status(400).json({ success: false, message: 'Chưa chọn file' });
+    }
+
+    const sheet = parseSheet(req.file.buffer);
+    if (sheet.error) return res.status(400).json({ success: false, message: sheet.error });
+
+    const result = await addParticipantsToClass(cls.id, sheet.rows, { firstLine: 2 });
+    if (result.error) return res.status(400).json({ success: false, message: result.error });
+
+    return res.json({ success: true, ...result, message: importSummary(result) });
+  } catch (err) {
+    console.error('Import class members error:', err);
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+}
+
+// Gỡ khỏi danh sách lớp — không đụng tới các buổi đã tạo (mỗi buổi có danh sách riêng).
 async function removeMembers(req, res) {
   try {
     const cls = await loadClass(req.params.id);
@@ -277,12 +216,11 @@ async function removeMembers(req, res) {
 
     const userIds = Array.isArray(req.body?.userIds) ? [...new Set(req.body.userIds)] : [];
     if (userIds.length === 0) {
-      return res.status(400).json({ success: false, message: 'Chưa chọn người dùng để gỡ' });
+      return res.status(400).json({ success: false, message: 'Chưa chọn người để gỡ' });
     }
 
-    const result = await prisma.user.updateMany({
-      where: { id: { in: userIds }, class: cls.name },
-      data: { class: null },
+    const result = await prisma.classMember.deleteMany({
+      where: { classId: cls.id, userId: { in: userIds } },
     });
 
     return res.json({
@@ -337,8 +275,8 @@ function parseSessionInput(body) {
 }
 
 // Tạo một buổi điểm danh cho lớp: sinh Event whitelist riêng cho lớp (không mở
-// đăng ký công khai), rồi tự động đưa toàn bộ sinh viên đang hoạt động của lớp
-// vào danh sách tham gia — BTC mở màn hình QR ngay sau khi tạo là điểm danh được.
+// đăng ký công khai), rồi chép danh sách lớp (ClassMember) vào danh sách tham gia
+// của buổi — BTC mở màn hình QR ngay sau khi tạo là điểm danh được.
 async function createSession(req, res) {
   try {
     const cls = await loadClass(req.params.id);
@@ -374,17 +312,17 @@ async function createSession(req, res) {
       },
     });
 
-    const students = await prisma.user.findMany({
-      where: { isActive: true, role: 'STUDENT', class: cls.name },
-      select: { id: true },
+    const members = await prisma.classMember.findMany({
+      where: { classId: cls.id, user: { isActive: true } },
+      select: { userId: true },
     });
-    const { added } = await addUsersToEvent(event.id, students.map((s) => s.id));
+    const { added } = await addUsersToEvent(event.id, members.map((m) => m.userId));
 
     return res.status(201).json({
       success: true,
       data: { ...event, gate: gateSummary(event) },
       enrolled: added,
-      message: `Đã tạo buổi điểm danh và thêm ${added} sinh viên của lớp ${cls.name}`,
+      message: `Đã tạo buổi điểm danh và thêm ${added} người của lớp ${cls.name}`,
     });
   } catch (err) {
     console.error('Create class session error:', err);
@@ -412,6 +350,6 @@ async function listSessions(req, res) {
 
 module.exports = {
   listClasses, createClass, getClass, updateClass, deleteClass,
-  listMembers, searchAssignable, addMembers, removeMembers,
+  listMembers, addMembers, importMembers, removeMembers,
   createSession, listSessions,
 };

@@ -9,7 +9,7 @@ const app = require('../src/app');
 const { stubMethod, restoreStubs } = require('../testenv');
 
 const ADMIN = { id: 'admin-1', mssv: null, email: 'admin@fpt.edu.vn', name: 'Admin', role: 'ADMIN', isActive: true, isFirstLogin: false };
-const STUDENT = { id: 'u-1', mssv: 'SE1', email: 'sv@fpt.edu.vn', name: 'An', role: 'STUDENT', isActive: true, isFirstLogin: false };
+const STUDENT = { id: 'u-1', mssv: 'SE1', email: 'sv@fpt.edu.vn', name: 'An', role: 'BTC', isActive: true, isFirstLogin: false };
 
 function tokenFor(id) {
   return jwt.sign({ userId: id }, process.env.JWT_SECRET);
@@ -68,6 +68,16 @@ test('admin can set an explicit password', async () => {
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.password, 'MatKhau123');
   assert.ok(await bcrypt.compare('MatKhau123', updateStub.calls[0][0].data.passwordHash));
+});
+
+test('a participant (STUDENT) never gets a password — they have no account', async () => {
+  const participant = { ...STUDENT, id: 'p-1', role: 'STUDENT' };
+  mockAuth(ADMIN, participant);
+  stubMethod(prisma.user, 'update', async () => { throw new Error('must not update'); });
+
+  const res = await resetReq(participant.id).send({});
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(res.body.error, 'NOT_STAFF');
 });
 
 test('password shorter than 6 characters is rejected', async () => {

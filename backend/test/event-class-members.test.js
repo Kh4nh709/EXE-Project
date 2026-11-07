@@ -37,47 +37,31 @@ const addByClass = (body, token = btcToken) =>
 
 afterEach(() => restoreStubs());
 
-// ── Danh sách lớp ──────────────────────────────────────────────
+// ── Danh sách lớp (ClassMember) ────────────────────────────────
 
-test('danh sách lớp trả về sĩ số và số người còn thiếu trong sự kiện', async () => {
+test('danh sách lớp trả về sĩ số và số người còn thiếu trong sự kiện; lớp rỗng bị loại', async () => {
   mockAuthAndEvent();
-  stubMethod(prisma.user, 'groupBy', async () => [
-    { class: 'SE1701', _count: { _all: 30 } },
-    { class: 'SE1702', _count: { _all: 25 } },
-    { class: '  ', _count: { _all: 4 } },
+  stubMethod(prisma.class, 'findMany', async () => [
+    { id: 'c1', name: 'SE1701', _count: { members: 30 } },
+    { id: 'c2', name: 'SE1702', _count: { members: 25 } },
+    { id: 'c3', name: 'Lớp rỗng', _count: { members: 0 } },
   ]);
-  stubMethod(prisma.eventMember, 'findMany', async () => [
-    { user: { class: 'SE1701' } },
-    { user: { class: 'SE1701' } },
-    { user: { class: null } },
-  ]);
+  const groupBy = stubMethod(prisma.classMember, 'groupBy', async () => [{ classId: 'c1', _count: { _all: 2 } }]);
 
   const res = await request(app).get('/api/events/evt-1/classes')
     .set('Authorization', `Bearer ${btcToken}`);
 
   assert.strictEqual(res.status, 200);
-  // Lớp rỗng bị loại, không dựng thành một mục "lớp" giả.
   assert.deepStrictEqual(res.body.data, [
-    { class: 'SE1701', total: 30, inEvent: 2, remaining: 28 },
-    { class: 'SE1702', total: 25, inEvent: 0, remaining: 25 },
+    { id: 'c1', class: 'SE1701', total: 30, inEvent: 2, remaining: 28 },
+    { id: 'c2', class: 'SE1702', total: 25, inEvent: 0, remaining: 25 },
   ]);
-});
-
-test('danh sách lớp chỉ đếm sinh viên đang hoạt động', async () => {
-  mockAuthAndEvent();
-  const groupBy = stubMethod(prisma.user, 'groupBy', async () => []);
-  stubMethod(prisma.eventMember, 'findMany', async () => []);
-
-  await request(app).get('/api/events/evt-1/classes').set('Authorization', `Bearer ${btcToken}`);
-
-  const where = groupBy.calls[0][0].where;
-  assert.strictEqual(where.isActive, true);
-  assert.strictEqual(where.role, 'STUDENT');
+  assert.deepStrictEqual(groupBy.calls[0][0].where, { user: { eventMembers: { some: { eventId: 'evt-1' } } } });
 });
 
 test('BTC khác không xem được danh sách lớp của sự kiện không phải của mình', async () => {
   mockAuthAndEvent();
-  stubMethod(prisma.user, 'groupBy', async () => { throw new Error('không được truy vấn'); });
+  stubMethod(prisma.class, 'findMany', async () => { throw new Error('không được truy vấn'); });
 
   const res = await request(app).get('/api/events/evt-1/classes')
     .set('Authorization', `Bearer ${otherBtcToken}`);
@@ -89,109 +73,81 @@ test('BTC khác không xem được danh sách lớp của sự kiện không ph
 
 test('thêm cả lớp ghi cả EventMember lẫn bản ghi điểm danh REGISTERED', async () => {
   mockAuthAndEvent();
-  stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }]);
+  const findMany = stubMethod(prisma.classMember, 'findMany', async () => [{ userId: 'u1' }, { userId: 'u2' }, { userId: 'u3' }, { userId: 'u1' }]);
   const { members, attendance } = mockJoin({ memberCount: 3 });
 
-  const res = await addByClass({ classes: ['SE1701'] });
+  const res = await addByClass({ classIds: ['c1', 'c2', 'c1', ''] });
 
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.added, 3);
   assert.strictEqual(res.body.skipped, 0);
-
+  // Người học hai lớp chỉ được thêm một lần.
   assert.deepStrictEqual(members.calls[0][0].data, [
     { eventId: 'evt-1', userId: 'u1' },
     { eventId: 'evt-1', userId: 'u2' },
     { eventId: 'evt-1', userId: 'u3' },
   ]);
-  assert.strictEqual(members.calls[0][0].skipDuplicates, true);
-  assert.deepStrictEqual(attendance.calls[0][0].data, [
-    { eventId: 'evt-1', userId: 'u1', status: 'REGISTERED' },
-    { eventId: 'evt-1', userId: 'u2', status: 'REGISTERED' },
-    { eventId: 'evt-1', userId: 'u3', status: 'REGISTERED' },
-  ]);
-  assert.strictEqual(attendance.calls[0][0].skipDuplicates, true);
+  assert.deepStrictEqual(attendance.calls[0][0].data[0], { eventId: 'evt-1', userId: 'u1', status: 'REGISTERED' });
+  const where = findMany.calls[0][0].where;
+  assert.deepStrictEqual(where.class, { id: { in: ['c1', 'c2'] } });
+  assert.deepStrictEqual(where.user, { isActive: true });
 });
 
-test('chỉ lấy sinh viên đang hoạt động của đúng các lớp đã chọn', async () => {
+test('vẫn nhận tên lớp (classes) cho client cũ', async () => {
   mockAuthAndEvent();
-  const findMany = stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }]);
+  const findMany = stubMethod(prisma.classMember, 'findMany', async () => [{ userId: 'u1' }]);
   mockJoin({ memberCount: 1 });
 
-  await addByClass({ classes: ['SE1701', ' SE1702 ', 'SE1701', '', null] });
+  const res = await addByClass({ class: ' SE1701 ' });
 
-  const where = findMany.calls[0][0].where;
-  assert.strictEqual(where.isActive, true);
-  assert.strictEqual(where.role, 'STUDENT');
-  // Trim, bỏ rỗng và loại trùng trước khi query.
-  assert.deepStrictEqual(where.class.in, ['SE1701', 'SE1702']);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(findMany.calls[0][0].where.class, { name: { in: ['SE1701'] } });
 });
 
 test('người đã có trong danh sách được báo là bỏ qua, không nhân bản', async () => {
   mockAuthAndEvent();
-  stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }]);
-  mockJoin({ memberCount: 1 }); // chỉ 1 suất mới, 2 người đã có sẵn
+  stubMethod(prisma.classMember, 'findMany', async () => [{ userId: 'u1' }, { userId: 'u2' }, { userId: 'u3' }]);
+  mockJoin({ memberCount: 1 });
 
-  const res = await addByClass({ classes: ['SE1701'] });
+  const res = await addByClass({ classIds: ['c1'] });
 
-  assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.added, 1);
   assert.strictEqual(res.body.skipped, 2);
-  assert.strictEqual(res.body.matched, 3);
   assert.match(res.body.message, /đã có sẵn/);
 });
 
-test('nhận cả dạng class đơn lẻ ngoài mảng classes', async () => {
+test('không chọn lớp nào trả 400; lớp chưa có ai trả 404', async () => {
   mockAuthAndEvent();
-  const findMany = stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }]);
-  mockJoin({ memberCount: 1 });
-
-  const res = await addByClass({ class: 'SE1701' });
-
-  assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(findMany.calls[0][0].where.class.in, ['SE1701']);
-});
-
-test('không chọn lớp nào trả 400 và không đụng tới DB', async () => {
-  mockAuthAndEvent();
-  stubMethod(prisma.user, 'findMany', async () => { throw new Error('không được truy vấn'); });
+  stubMethod(prisma.classMember, 'findMany', async () => []);
   const { members } = mockJoin();
 
-  for (const body of [{}, { classes: [] }, { classes: ['', '   '] }]) {
+  for (const body of [{}, { classIds: [] }, { classes: ['', '   '] }]) {
     const res = await addByClass(body);
     assert.strictEqual(res.status, 400, `body=${JSON.stringify(body)}`);
-    assert.strictEqual(members.calls.length, 0);
   }
-});
-
-test('lớp không có sinh viên nào trả 404', async () => {
-  mockAuthAndEvent();
-  stubMethod(prisma.user, 'findMany', async () => []);
-  const { members } = mockJoin();
-
-  const res = await addByClass({ classes: ['SE9999'] });
-
-  assert.strictEqual(res.status, 404);
+  const empty = await addByClass({ classIds: ['c9'] });
+  assert.strictEqual(empty.status, 404);
   assert.strictEqual(members.calls.length, 0);
 });
 
 test('BTC khác không thêm được lớp vào sự kiện không phải của mình', async () => {
   mockAuthAndEvent();
-  stubMethod(prisma.user, 'findMany', async () => { throw new Error('không được truy vấn'); });
+  stubMethod(prisma.classMember, 'findMany', async () => { throw new Error('không được truy vấn'); });
   const { members } = mockJoin();
 
-  const res = await addByClass({ classes: ['SE1701'] }, otherBtcToken);
+  const res = await addByClass({ classIds: ['c1'] }, otherBtcToken);
 
   assert.strictEqual(res.status, 403);
   assert.strictEqual(members.calls.length, 0);
 });
 
-test('sinh viên không được phép thêm lớp vào sự kiện', async () => {
+test('người tham gia (không có tài khoản) không gọi được API này', async () => {
   mockAuthAndEvent();
   const { members } = mockJoin();
 
-  const res = await addByClass({ classes: ['SE1701'] }, studentToken);
+  const res = await addByClass({ classIds: ['c1'] }, studentToken);
 
-  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.status, 401);
   assert.strictEqual(members.calls.length, 0);
 });
 

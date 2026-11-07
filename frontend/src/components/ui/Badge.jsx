@@ -50,7 +50,8 @@ export const ROLES = {
   ADMIN: { tone: 'violet', label: 'Admin' },
   BTC: { tone: 'teal', label: 'Ban tổ chức' },
   LECTURER: { tone: 'pink', label: 'Giảng viên' },
-  STUDENT: { tone: 'neutral', label: 'Sinh viên' },
+  // Người tham gia không có tài khoản (role STUDENT giữ tên cũ trong DB).
+  STUDENT: { tone: 'neutral', label: 'Người tham gia' },
 };
 
 export const FRAUD_REASONS = {

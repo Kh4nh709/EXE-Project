@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Activity, ArrowLeft, Lock, Mail, MapPin, QrCode, Users } from 'lucide-react';
+import { Activity, ArrowLeft, MapPin, QrCode, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { authApi } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import Button from '../components/ui/Button';
 import Logo from '../components/ui/Logo';
-import Tabs from '../components/ui/Tabs';
 import OtpInput from '../components/ui/OtpInput';
 import { Field, Input, PasswordInput } from '../components/ui/Input';
 
@@ -14,7 +13,7 @@ const features = [
   { icon: QrCode, title: 'QR đổi mỗi 30 giây', desc: 'Mã ký HMAC, chụp gửi bạn là hết hạn' },
   { icon: MapPin, title: 'Xác thực GPS', desc: 'Chỉ check-in được trong bán kính cho phép' },
   { icon: Activity, title: 'Cập nhật tức thì', desc: 'Danh sách điểm danh và báo cáo theo thời gian thực' },
-  { icon: Users, title: 'Bốn vai trò', desc: 'Admin · Ban tổ chức · Giảng viên · Sinh viên' },
+  { icon: Users, title: 'Người tham gia không cần tài khoản', desc: 'Quét QR, nhập email, nhận mã là điểm danh xong' },
 ];
 
 const AUTH_INPUT = 'h-12 md:h-12';
@@ -49,10 +48,6 @@ export default function Login() {
   const [newPass, setNewPass] = useState({ current: '', new: '', confirm: '' });
   // Quên mật khẩu: identifier được giữ lại qua bước nhập mã vì API reset cần
   // gửi kèm (backend không trả về userId để tránh dò tài khoản tồn tại).
-  // 'password' = MSSV + mật khẩu như cũ; 'otp' = sinh viên nhận mã qua email,
-  // không cần nhớ mật khẩu (tiện khi vừa quét QR ở cửa hội trường).
-  const [loginMode, setLoginMode] = useState('password');
-  const [loginOtp,  setLoginOtp]  = useState('');
   const [forgotId,  setForgotId]  = useState('');
   const [resetForm, setResetForm] = useState({ otp: '', new: '', confirm: '' });
 
@@ -77,7 +72,7 @@ export default function Login() {
         data.user.isFirstLogin ? setStep('change-password') : navigate(redirectTo, { replace: true });
       }
     } catch (err) {
-      // Sai mật khẩu: xoá ô mật khẩu để gõ lại ngay, giữ MSSV/email
+      // Sai mật khẩu: xoá ô mật khẩu để gõ lại ngay, giữ email
       setForm((f) => ({ ...f, password: '' }));
       setError(err.response?.data?.message || 'Đăng nhập thất bại');
     } finally {
@@ -101,49 +96,9 @@ export default function Login() {
     }
   };
 
-  const handleRequestLoginOtp = async (e) => {
-    e.preventDefault();
-    if (!form.identifier.trim()) return setError('Vui lòng nhập MSSV hoặc email');
-    setError('');
-    setLoading(true);
-    try {
-      const { data } = await authApi.requestLoginOtp({ identifier: form.identifier.trim() });
-      toast.success(data.message);
-      setStep('login-otp');
-    } catch (err) {
-      setError(err.response?.data?.message || 'Không gửi được mã đăng nhập');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLoginWithOtp = async (e) => {
-    e.preventDefault();
-    if (loginOtp.length !== 6) return setError('Mã đăng nhập gồm 6 chữ số');
-    setError('');
-    setLoading(true);
-    try {
-      const { data } = await authApi.loginWithOtp({
-        identifier: form.identifier.trim(),
-        otp: loginOtp,
-      });
-      if (data.success) {
-        login(data.token, data.user);
-        // Không đẩy sang bước đổi mật khẩu: người dùng vào bằng mã email nên
-        // không có "mật khẩu hiện tại" để nhập.
-        navigate(redirectTo, { replace: true });
-      }
-    } catch (err) {
-      setLoginOtp('');
-      setError(err.response?.data?.message || 'Mã đăng nhập không đúng');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleForgot = async (e) => {
     e.preventDefault();
-    if (!forgotId.trim()) return setError('Vui lòng nhập MSSV hoặc email');
+    if (!forgotId.trim()) return setError('Vui lòng nhập email');
     setError('');
     setLoading(true);
     try {
@@ -207,27 +162,16 @@ export default function Login() {
   if (step === 'login') {
     content = (
       <>
-        <StepHead title="Đăng nhập">Nhập thông tin để truy cập hệ thống điểm danh.</StepHead>
-        <div className="mt-6">
-          <Tabs
-            variant="segmented"
-            layout="full"
-            ariaLabel="Cách đăng nhập"
-            value={loginMode}
-            onChange={(mode) => { setLoginMode(mode); setError(''); }}
-            items={[
-              { value: 'password', label: 'Mật khẩu', icon: Lock, grow: true },
-              { value: 'otp', label: 'Mã qua email', icon: Mail, grow: true },
-            ]}
-          />
-        </div>
-        <form onSubmit={loginMode === 'otp' ? handleRequestLoginOtp : handleLogin} className="mt-6 flex flex-col gap-4">
-          <Field label="MSSV hoặc email">
+        <StepHead title="Đăng nhập">
+          Dành cho Ban tổ chức và quản trị viên. Người tham gia không cần tài khoản: chỉ cần quét mã QR tại sự kiện.
+        </StepHead>
+        <form onSubmit={handleLogin} className="mt-6 flex flex-col gap-4">
+          <Field label="Email">
             {(id) => (
               <Input
                 id={id}
                 className={AUTH_INPUT}
-                placeholder="Nhập MSSV hoặc email"
+                placeholder="Nhập email"
                 autoComplete="username"
                 value={form.identifier}
                 invalid={Boolean(error)}
@@ -235,33 +179,30 @@ export default function Login() {
               />
             )}
           </Field>
-          {loginMode === 'password' ? (
-            <div className="relative flex flex-col gap-1.5">
-              <label htmlFor="login-password" className="w-fit cursor-pointer text-sm font-medium text-foreground">Mật khẩu</label>
-              <PasswordInput
-                id="login-password"
-                className={AUTH_INPUT}
-                placeholder="Nhập mật khẩu"
-                autoComplete="current-password"
-                value={form.password}
-                invalid={Boolean(error)}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-              />
-              <button
-                type="button"
-                onClick={() => { setForgotId(form.identifier); setStep('forgot'); }}
-                className="absolute right-0 top-0 text-sm text-foreground outline-none before:absolute before:-inset-x-2 before:-inset-y-2.5 hover:underline"
-              >
-                Quên mật khẩu?
-              </button>
-            </div>
-          ) : (
-            <p className="text-pretty text-sm text-muted">Mã 6 chữ số sẽ được gửi tới email đã đăng ký.</p>
-          )}
+          <div className="relative flex flex-col gap-1.5">
+            <label htmlFor="login-password" className="w-fit cursor-pointer text-sm font-medium text-foreground">Mật khẩu</label>
+            <PasswordInput
+              id="login-password"
+              className={AUTH_INPUT}
+              placeholder="Nhập mật khẩu"
+              autoComplete="current-password"
+              value={form.password}
+              invalid={Boolean(error)}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => { setForgotId(form.identifier); setStep('forgot'); }}
+              className="absolute right-0 top-0 text-sm text-foreground outline-none before:absolute before:-inset-x-2 before:-inset-y-2.5 hover:underline"
+            >
+              Quên mật khẩu?
+            </button>
+          </div>
+
           <div className="flex flex-col gap-2">
             <ErrorLine message={error} />
             <Button type="submit" variant="primary" size="auth" loading={loading} className="w-full">
-              {loginMode === 'otp' ? 'Gửi mã đăng nhập' : 'Đăng nhập'}
+              Đăng nhập
             </Button>
           </div>
         </form>
@@ -282,31 +223,14 @@ export default function Login() {
         </div>
       </form>
     );
-  } else if (step === 'login-otp') {
-    content = (
-      <form onSubmit={handleLoginWithOtp}>
-        <StepHead title="Đăng nhập bằng OTP">
-          Mã 6 chữ số đã gửi tới email của <span className="font-medium text-foreground">{form.identifier}</span>. Hiệu lực 10 phút.
-        </StepHead>
-        <fieldset className="mt-6">
-          <legend className="mb-2 text-sm font-medium text-foreground">Mã đăng nhập</legend>
-          <OtpInput value={loginOtp} onChange={(v) => { setLoginOtp(v); if (error) setError(''); }} invalid={Boolean(error)} idPrefix="login-otp" />
-          <p aria-live="polite" className="mt-2 min-h-4 text-xs text-error-text">{error}</p>
-        </fieldset>
-        <div className="mt-4 flex flex-col gap-2">
-          <Button type="submit" variant="primary" size="auth" loading={loading} className="w-full">Đăng nhập</Button>
-          {backButton('Quay lại', () => { setStep('login'); setLoginOtp(''); })}
-        </div>
-      </form>
-    );
   } else if (step === 'forgot') {
     content = (
       <>
-        <StepHead title="Quên mật khẩu">Nhập MSSV hoặc email để nhận mã xác thực.</StepHead>
+        <StepHead title="Quên mật khẩu">Nhập email tài khoản để nhận mã xác thực.</StepHead>
         <form onSubmit={handleForgot} className="mt-6 flex flex-col gap-4">
-          <Field label="MSSV hoặc email">
+          <Field label="Email">
             {(id) => (
-              <Input id={id} className={AUTH_INPUT} placeholder="Nhập MSSV hoặc email" autoComplete="username"
+              <Input id={id} className={AUTH_INPUT} placeholder="Nhập email" autoComplete="username"
                 value={forgotId} invalid={Boolean(error)} onChange={(e) => setForgotId(e.target.value)} />
             )}
           </Field>

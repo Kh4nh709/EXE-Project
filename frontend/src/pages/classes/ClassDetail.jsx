@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CalendarPlus, Ellipsis, Pencil, QrCode, Trash2, UserMinus, UserPlus } from 'lucide-react';
 import { format } from 'date-fns';
@@ -13,7 +13,8 @@ import Pagination from '../../components/ui/Pagination';
 import Dropdown, { MenuGroup, MenuItem, MenuSeparator } from '../../components/ui/Dropdown';
 import { Card, TableCard, Th } from '../../components/ui/Card';
 import { SearchInput } from '../../components/ui/Input';
-import { Checkbox, CheckCell } from '../../components/ui/Choice';
+import { CheckCell } from '../../components/ui/Choice';
+import ParticipantsAdder, { ImportResult } from '../../components/participants/ParticipantsAdder';
 import { EmptyText, Skeleton, SkeletonRows } from '../../components/ui/States';
 import { isGateOpen } from '../../utils/eventStatus';
 import { cx } from '../../utils/cx';
@@ -73,7 +74,7 @@ export default function ClassDetail() {
   const handleDelete = async () => {
     if (!(await confirm({
       title: 'Xoá lớp?',
-      body: <>Lớp <span className="font-medium text-foreground">{cls.name}</span> sẽ bị xoá.</>,
+      body: <>Lớp <span className="font-medium text-foreground">{cls.name}</span> và danh sách của lớp sẽ bị xoá. Các buổi điểm danh đã tạo vẫn giữ nguyên.</>,
       confirmLabel: 'Xoá lớp',
     }))) return;
     try {
@@ -181,13 +182,7 @@ function MembersTab({ classId, className, onChanged }) {
   const [removing, setRemoving] = useState(false);
 
   const [adding, setAdding] = useState(false);
-  const [query, setQuery] = useState('');
-  const [unassignedOnly, setUnassignedOnly] = useState(false);
-  const [results, setResults] = useState([]);
-  const [resultSelected, setResultSelected] = useState({});
-  const [searching, setSearching] = useState(false);
-  const [savingAdd, setSavingAdd] = useState(false);
-  const searchTimer = useRef(null);
+  const [lastResult, setLastResult] = useState(null);
 
   const load = useCallback((p = 1, s = search) => {
     setLoading(true);
@@ -242,63 +237,17 @@ function MembersTab({ classId, className, onChanged }) {
     }
   };
 
-  // Hộp thêm thành viên — chạy lại tìm kiếm mỗi khi đổi từ khoá hoặc bật/tắt lọc.
-  const runSearch = useCallback((q, unassigned) => {
-    if (!unassigned && !q.trim()) { setResults([]); return; }
-    setSearching(true);
-    classApi.searchAssignable(classId, { q, ...(unassigned && { unassignedOnly: 1 }) })
-      .then(({ data }) => setResults(data.data || []))
-      .catch(() => {})
-      .finally(() => setSearching(false));
-  }, [classId]);
-
-  const handleQueryChange = (v) => {
-    setQuery(v);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => runSearch(v, unassignedOnly), 350);
-  };
-
-  const toggleUnassignedOnly = () => {
-    const next = !unassignedOnly;
-    setUnassignedOnly(next);
-    runSearch(query, next);
-  };
-
-  const openAddPanel = () => {
-    setAdding(true);
-    setQuery('');
-    setUnassignedOnly(false);
-    setResults([]);
-    setResultSelected({});
-  };
-
-  const toggleResult = (u) => setResultSelected((prev) => {
-    const next = { ...prev };
-    if (next[u.id]) delete next[u.id]; else next[u.id] = u;
-    return next;
-  });
-
-  const handleAddSelected = async () => {
-    const ids = Object.keys(resultSelected);
-    if (ids.length === 0) return toast.error('Chưa chọn ai để thêm');
-    setSavingAdd(true);
-    try {
-      const { data } = await classApi.addMembers(classId, ids);
-      toast.success(data.message || 'Đã thêm vào lớp');
-      setAdding(false);
-      setPage(1);
-      load(1, search);
-      onChanged?.();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Thêm thất bại');
-    } finally {
-      setSavingAdd(false);
-    }
+  // Danh sách lớp nhập bằng email + họ tên — người tham gia không có tài khoản.
+  const afterAdd = (result) => {
+    setAdding(false);
+    setLastResult(result);
+    setPage(1);
+    load(1, search);
+    onChanged?.();
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const selectedCount = Object.keys(selected).length;
-  const resultSelectedCount = Object.keys(resultSelected).length;
 
   return (
     <>
@@ -313,8 +262,12 @@ function MembersTab({ classId, className, onChanged }) {
       ) : (
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <SearchInput className="w-full sm:w-64" placeholder="Tìm trong lớp" value={search} onChange={(e) => handleSearch(e.target.value)} />
-          <Button icon={UserPlus} onClick={openAddPanel}>Thêm thành viên</Button>
+          <Button icon={UserPlus} onClick={() => setAdding(true)}>Thêm thành viên</Button>
         </div>
+      )}
+
+      {lastResult && (
+        <div className="mb-4"><ImportResult result={lastResult} onClose={() => setLastResult(null)} /></div>
       )}
 
       <TableCard>
@@ -330,7 +283,7 @@ function MembersTab({ classId, className, onChanged }) {
               <thead className="border-b border-border">
                 <tr>
                   <CheckCell as="th" checked={allOnPage} indeterminate={!allOnPage && someOnPage} onChange={toggleAll} ariaLabel="Chọn tất cả" />
-                  <Th>Sinh viên</Th>
+                  <Th>Họ tên</Th>
                   <Th>MSSV</Th>
                   <Th className="hidden w-full md:table-cell">Email</Th>
                 </tr>
@@ -354,58 +307,12 @@ function MembersTab({ classId, className, onChanged }) {
         )}
       </TableCard>
 
-      <Modal
-        open={adding}
-        onClose={() => setAdding(false)}
-        title={`Thêm thành viên vào lớp ${className}`}
-        size="lg"
-        footer={(
-          <>
-            <Button variant="secondary" size="form" onClick={() => setAdding(false)}>Huỷ</Button>
-            <Button variant="primary" size="form" loading={savingAdd} disabled={resultSelectedCount === 0} onClick={handleAddSelected}>
-              Thêm{resultSelectedCount > 0 ? ` ${resultSelectedCount} người` : ''}
-            </Button>
-          </>
-        )}
-      >
-        <div className="flex flex-col gap-4">
-          <Checkbox
-            label="Chỉ hiện người chưa có lớp"
-            desc="Đúng nhóm hay bị thiếu thông tin lớp — không cần gõ tên, hiện luôn danh sách"
-            checked={unassignedOnly}
-            onChange={toggleUnassignedOnly}
-          />
-          <SearchInput autoFocus placeholder="Tìm theo tên, MSSV, email…" value={query} onChange={(e) => handleQueryChange(e.target.value)} />
-          <div className="max-h-80 overflow-y-auto">
-            {searching ? (
-              <SkeletonRows rows={3} avatar={false} right={false} />
-            ) : results.length === 0 ? (
-              <EmptyText>
-                {unassignedOnly ? 'Không còn ai thiếu thông tin lớp' : query.trim() ? 'Không tìm thấy' : 'Nhập từ khoá hoặc bật lọc ở trên'}
-              </EmptyText>
-            ) : (
-              <ul className="flex flex-col gap-0.5">
-                {results.map((u) => {
-                  const isSel = !!resultSelected[u.id];
-                  return (
-                    <li key={u.id}>
-                      <label className={cx('flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5', isSel ? 'bg-secondary' : 'hover:bg-item-hover')}>
-                        <Checkbox small checked={isSel} onChange={() => toggleResult(u)} ariaLabel={`Chọn ${u.name}`} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium text-foreground">{u.name}</span>
-                          <span className="block truncate text-xs text-muted">
-                            {u.mssv || u.email}
-                            {u.class ? <span className="font-medium text-warning"> · đang ở lớp {u.class}</span> : ' · chưa có lớp'}
-                          </span>
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
+      <Modal open={adding} onClose={() => setAdding(false)} title={`Thêm vào danh sách lớp ${className}`} size="lg">
+        <ParticipantsAdder
+          onAdd={(rows) => classApi.addMembers(classId, rows)}
+          onImport={(file) => classApi.importMembers(classId, file)}
+          onDone={afterAdd}
+        />
       </Modal>
     </>
   );

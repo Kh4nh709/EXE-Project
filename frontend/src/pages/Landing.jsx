@@ -11,13 +11,13 @@ const features = [
   { icon: ShieldCheck, title: 'Chống gian lận nhiều lớp', desc: 'Khoá thiết bị qua OTP email, kiểm mã QR, GPS và khung giờ.', color: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300' },
   { icon: ChartColumn, title: 'Báo cáo và xuất Excel', desc: 'Số liệu điểm danh theo thời gian thực, xuất Excel đủ thông tin sinh viên.', color: 'bg-orange-50 text-orange-600 dark:bg-orange-500/15 dark:text-orange-300' },
   { icon: Smartphone, title: 'Quét bằng điện thoại', desc: 'Dùng camera hoặc Zalo, không phải cài ứng dụng.', color: 'bg-pink-50 text-pink-600 dark:bg-pink-500/15 dark:text-pink-300' },
-  { icon: Users, title: 'Bốn vai trò', desc: 'Admin · Ban tổ chức · Giảng viên · Sinh viên. Import hàng loạt bằng Excel.', color: 'bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300' },
+  { icon: Users, title: 'Người tham gia không cần tài khoản', desc: 'Ban tổ chức nhập danh sách email cho từng sự kiện; người tham gia quét QR, nhập email là điểm danh.', color: 'bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-300' },
 ];
 
 const steps = [
   { title: 'BTC tạo sự kiện', desc: 'Nhập thông tin, vị trí GPS, khung giờ và danh sách tham dự.' },
   { title: 'Chiếu mã QR', desc: 'Mở màn QR toàn màn hình ở cổng vào, mã tự đổi mỗi 30 giây.' },
-  { title: 'Sinh viên quét QR', desc: 'Đăng ký bằng họ tên, MSSV, email rồi quét để điểm danh.' },
+  { title: 'Người tham gia quét QR', desc: 'Nhập email đã đăng ký, nhận mã 6 số qua email là điểm danh xong.' },
   { title: 'Xem báo cáo', desc: 'Theo dõi điểm danh trực tiếp, xuất Excel khi kết thúc.' },
 ];
 
@@ -29,10 +29,9 @@ const highlights = [
 ];
 
 const roles = [
-  ['ADMIN', ['Quản lý toàn bộ người dùng', 'Import sinh viên từ Excel', 'Xem log gian lận', 'Reset thiết bị']],
-  ['BTC', ['Tạo và quản lý sự kiện', 'Chiếu mã QR check-in', 'Xem báo cáo theo thời gian thực', 'Xuất Excel']],
-  ['LECTURER', ['Xem danh sách sự kiện', 'Theo dõi điểm danh', 'Xem thống kê lớp']],
-  ['STUDENT', ['Đăng ký tham gia sự kiện', 'Quét QR check-in, check-out', 'Xem sự kiện sắp tới', 'Lịch sử tham dự']],
+  ['ADMIN', ['Quản lý tài khoản Ban tổ chức', 'Import ảnh khuôn mặt theo lô', 'Xem log gian lận', 'Reset thiết bị']],
+  ['BTC', ['Tạo sự kiện, nhập danh sách tham gia', 'Chiếu mã QR, kiosk khuôn mặt', 'Xem báo cáo theo thời gian thực', 'Cấp chứng nhận, xuất Excel']],
+  ['STUDENT', ['Không cần tài khoản', 'Tự đăng ký bằng họ tên, MSSV, email', 'Quét QR + mã email để check-in, check-out', 'Nhận chứng nhận qua email']],
 ];
 
 // Nền thương hiệu: gradient xanh đậm, mã đặc dự phòng phía dưới, chữ trắng đặc. Nút sáng đổi sang nền
@@ -119,7 +118,7 @@ export default function Landing() {
 
       <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 className="text-2xl font-semibold text-foreground sm:text-3xl">Dành cho tất cả mọi người</h2>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {roles.map(([role, perms]) => (
             <div key={role} className="rounded-2xl border border-border bg-surface p-5">
               <RoleBadge role={role} />
@@ -140,7 +139,7 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl px-4 py-14 text-center sm:px-6">
           <h2 className="text-balance text-2xl font-bold sm:text-3xl">Sẵn sàng triển khai?</h2>
           <p className="mx-auto mt-3 max-w-[55ch] text-pretty text-base/7 text-white">
-            Đăng ký tham gia sự kiện chỉ với họ tên, MSSV và email. Chưa có tài khoản thì hệ thống tự tạo và gửi thông tin đăng nhập cho bạn.
+            Đăng ký tham gia sự kiện chỉ với họ tên, MSSV và email — không cần tạo tài khoản.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
             <Link to="/dang-ky" className={LIGHT_CTA}>Đăng ký tham gia sự kiện <ArrowRight className="size-4" aria-hidden="true" /></Link>
@@ -150,9 +149,17 @@ export default function Landing() {
       </section>
 
       <footer className="border-t border-border">
-        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <div className="flex items-center gap-2"><Logo className="size-6" /><span>© 2026 FPT University</span></div>
-          <Link to="/dang-ky" className="inline-flex h-10 items-center hover:text-foreground">Đăng ký tham gia sự kiện</Link>
+        <div className="mx-auto max-w-6xl px-4 py-8 text-sm text-muted sm:px-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2"><Logo className="size-6" /><span>© 2026 FPT University</span></div>
+            <Link to="/dang-ky" className="inline-flex h-10 items-center hover:text-foreground">Đăng ký tham gia sự kiện</Link>
+          </div>
+          <p className="mt-4 text-pretty border-t border-border pt-4">
+            Sản phẩm được phát triển bởi nhóm sinh viên:{' '}
+            <span className="text-foreground">
+              Mai Nam Nguyên, Lê Hiếu Nghĩa, Nguyễn Trần Quế Đông, Nguyễn Huỳnh Bảo Trân và Huỳnh Nguyễn Kim Như
+            </span>.
+          </p>
         </div>
       </footer>
     </div>

@@ -364,9 +364,10 @@ test('a pass cannot check in a second person from the same phone', async () => {
   assert.strictEqual(upsert.calls.length, 0);
 });
 
-test('logged-in check-in obeys the one-phone-one-person rule too', async () => {
-  // Đăng nhập OTP tự tin cậy máy mới, nên bỏ ngỏ đường này thì luật vô dụng.
+test('logged-in check-in (staff attending) obeys the one-phone-one-person rule too', async () => {
   const { upsert } = mockPassCheckin({ otherOnDevice: { userId: 'u2' } });
+  // Người tham gia không đăng nhập được nữa; đường JWT chỉ còn cho nhân sự đi dự.
+  stubMethod(prisma.user, 'findUnique', async () => ({ ...STUDENT, role: 'LECTURER' }));
   stubMethod(prisma.deviceBinding, 'findFirst', async () => ({ id: 'b1', isTrusted: true }));
 
   const res = await request(app)

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Award, CalendarDays, ChevronsUpDown, ClipboardList, GraduationCap, History, House, LayoutDashboard,
-  LogOut, Monitor, Moon, ScanFace, ShieldAlert, Sun, Users,
+  CalendarDays, ChevronsUpDown, ClipboardList, GraduationCap, House, LayoutDashboard,
+  LogOut, Monitor, Moon, ShieldAlert, Sun, Users,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -25,12 +25,6 @@ export const NAV = {
     { to: '/dashboard', icon: House, label: 'Trang chủ' },
     { to: '/events', icon: CalendarDays, label: 'Sự kiện' },
   ],
-  STUDENT: [
-    { to: '/dashboard', icon: House, label: 'Trang chủ' },
-    { to: '/my-attendance', icon: History, label: 'Lịch sử tham dự', short: 'Lịch sử' },
-    { to: '/my-certificates', icon: Award, label: 'Chứng nhận' },
-    { to: '/khuon-mat', icon: ScanFace, label: 'Khuôn mặt' },
-  ],
 };
 
 // Mục đang chọn: trang hiện tại hoặc trang con của nó (/events/123 vẫn sáng mục Sự kiện)
@@ -38,8 +32,8 @@ export function isActivePath(pathname, to) {
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
-// Dòng vai trò ở đầu menu tài khoản: sinh viên kèm MSSV
-export const accountRole = (user) => (user?.role === 'STUDENT' && user?.mssv ? `Sinh viên · ${user.mssv}` : roleLabel(user?.role));
+// Dòng vai trò ở đầu menu tài khoản (chỉ nhân sự có tài khoản)
+export const accountRole = (user) => roleLabel(user?.role);
 
 // Menu tài khoản: vai trò + email, giao diện Sáng/Tối/Theo hệ thống, đăng xuất (đỏ khi rê)
 export function AccountMenuItems() {

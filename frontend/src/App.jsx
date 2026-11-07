@@ -5,7 +5,7 @@ import { PageSpinner } from './components/ui/States';
 // Pages
 import Landing from './pages/Landing';
 import Login from './pages/Login';
-import StudentDashboard from './pages/student/StudentDashboard';
+import Dashboard from './pages/Dashboard';
 import EventList from './pages/btc/EventList';
 import EventCreate from './pages/btc/EventCreate';
 import EventDetail from './pages/btc/EventDetail';
@@ -13,21 +13,18 @@ import QRDisplay from './pages/btc/QRDisplay';
 import ScanLanding from './pages/scan/ScanLanding';
 import UserManagement from './pages/admin/UserManagement';
 import FraudLogs from './pages/FraudLogs';
-import MyAttendance from './pages/student/MyAttendance';
 import PublicEventList from './pages/public/PublicEventList';
 import EventRegister from './pages/public/EventRegister';
 import SharedReport from './pages/public/SharedReport';
 import ClassManagement from './pages/classes/ClassManagement';
 import ClassDetail from './pages/classes/ClassDetail';
 import FeedbackTemplates from './pages/feedback/FeedbackTemplates';
-import EventFeedback from './pages/student/EventFeedback';
-import MyCertificates from './pages/student/MyCertificates';
+import CertificateView from './pages/public/CertificateView';
 import GuestScanPage from './pages/btc/GuestScanPage';
 import VolunteerScan from './pages/public/VolunteerScan';
 import InvitationView from './pages/public/InvitationView';
 import PublicCheckin from './pages/public/checkin/PublicCheckin';
 import FaceCheckin from './pages/btc/FaceCheckin';
-import FaceEnroll from './pages/student/FaceEnroll';
 
 function RequireAuth({ children, roles }) {
   const { user, loading } = useAuth();
@@ -71,6 +68,8 @@ export default function App() {
 
       {/* Báo cáo BTC chia sẻ — xem được không cần đăng nhập */}
       <Route path="/bao-cao/:token" element={<SharedReport />} />
+      {/* Link riêng trong email chứng nhận — không cần đăng nhập */}
+      <Route path="/chung-nhan/:token" element={<CertificateView />} />
 
       {/* Sự kiện thiệp mời — công khai: khách xem thiệp của mình, tình nguyện viên quét qua link BTC phát */}
       <Route path="/thiep/:code" element={<InvitationView />} />
@@ -78,7 +77,7 @@ export default function App() {
       {/* Check-in công khai — người ghé thăm quét QR cố định trên màn chiếu, không cần tài khoản */}
       <Route path="/check-in/:id" element={<PublicCheckin />} />
 
-      {/* QR Scan — accessible but requires login (redirects to login if needed) */}
+      {/* Quét QR điểm danh — người tham gia không cần tài khoản (email + mã OTP) */}
       <Route path="/scan" element={<ScanLanding />} />
 
       {/* QR Display — requires BTC/ADMIN (opened in new tab) */}
@@ -102,14 +101,9 @@ export default function App() {
         </RequireAuth>
       } />
 
-      {/* Student */}
-      <Route path="/dashboard" element={<RequireAuth><StudentDashboard /></RequireAuth>} />
-      <Route path="/my-attendance" element={<RequireAuth><MyAttendance /></RequireAuth>} />
-      {/* Link BTC phát cho người tham dự — tự chuyển qua /login?redirect= nếu chưa đăng nhập */}
-      <Route path="/feedback/:eventId" element={<EventFeedback />} />
-      {/* Link trong email "đã có chứng nhận" trỏ về đây */}
-      <Route path="/my-certificates" element={<RequireAuth><MyCertificates /></RequireAuth>} />
-      <Route path="/khuon-mat" element={<RequireAuth roles={['STUDENT']}><FaceEnroll /></RequireAuth>} />
+      {/* Tổng quan cho nhân sự. Người tham gia không có tài khoản nên không có trang riêng:
+          họ check-in qua /scan, xem chứng nhận qua link trong email (/chung-nhan/:token). */}
+      <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
 
       {/* Events — BTC/ADMIN/LECTURER */}
       <Route path="/events" element={<RequireAuth roles={['ADMIN', 'BTC', 'LECTURER']}><EventList /></RequireAuth>} />

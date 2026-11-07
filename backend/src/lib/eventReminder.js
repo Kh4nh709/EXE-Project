@@ -57,7 +57,6 @@ function countRecipients(eventId) {
 
 async function deliver(event, recipients, { now, note }) {
   const lead = leadText(event.checkinOpen, now);
-  const loginUrl = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL.replace(/\/$/, '')}/login` : null;
   let sent = 0;
   let failed = 0;
   // Mỗi người một email riêng (không để cả danh sách trong "To"), chạy song
@@ -65,7 +64,7 @@ async function deliver(event, recipients, { now, note }) {
   for (let i = 0; i < recipients.length; i += SEND_CONCURRENCY) {
     const batch = recipients.slice(i, i + SEND_CONCURRENCY);
     const results = await Promise.allSettled(batch.map((u) =>
-      emailService.sendEventReminderEmail(u.email, u.name, event, { leadText: lead, note, loginUrl })));
+      emailService.sendEventReminderEmail(u.email, u.name, event, { leadText: lead, note })));
     for (const r of results) {
       if (r.status === 'fulfilled') sent += 1;
       else {

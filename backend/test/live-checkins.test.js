@@ -9,7 +9,8 @@ const { stubMethod, restoreStubs } = require('../testenv');
 const USERS = {
   'btc-1': { id: 'btc-1', mssv: null, email: 'btc@f.c', name: 'BTC', role: 'BTC', isActive: true, isFirstLogin: false },
   'btc-2': { id: 'btc-2', mssv: null, email: 'btc2@f.c', name: 'BTC 2', role: 'BTC', isActive: true, isFirstLogin: false },
-  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'SV', role: 'STUDENT', isActive: true, isFirstLogin: false },
+  // Người tham gia không đăng nhập (2026-11-07): người dùng không phải BTC giờ là nhân sự khác.
+  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'SV', role: 'LECTURER', isActive: true, isFirstLogin: false },
 };
 const auth = (id) => `Bearer ${jwt.sign({ userId: id }, process.env.JWT_SECRET)}`;
 

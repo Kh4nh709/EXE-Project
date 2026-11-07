@@ -135,7 +135,7 @@ export default function SessionCreateModal({ open, classId, className, onClose, 
       {open && (
         <form id="session-create-form" onSubmit={handleSubmit} className="flex flex-col gap-5">
           <Banner tone="info" compact>
-            Toàn bộ sinh viên đang hoạt động của lớp <span className="font-medium text-foreground">{className}</span> sẽ được thêm vào danh sách
+            Toàn bộ danh sách lớp <span className="font-medium text-foreground">{className}</span> sẽ được thêm vào danh sách
             tham gia. {useSchedule ? 'Điểm danh mở/đóng theo khung giờ bên dưới.' : 'Điểm danh mở ngay sau khi tạo.'}
           </Banner>
 

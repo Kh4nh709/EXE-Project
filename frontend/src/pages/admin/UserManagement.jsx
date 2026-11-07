@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Copy, Ellipsis, KeyRound, Lock, Pencil, Plus, ScanFace, Smartphone, Trash2, Upload, UserCheck, UserX } from 'lucide-react';
+import { Copy, Ellipsis, KeyRound, Lock, Pencil, Plus, ScanFace, Smartphone, Trash2, UserCheck, UserX } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { adminApi } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,21 +17,24 @@ import { Field, Input, SearchInput } from '../../components/ui/Input';
 import { CheckCell } from '../../components/ui/Choice';
 import { LoadError, SkeletonRows } from '../../components/ui/States';
 import { cx } from '../../utils/cx';
-import ImportStudents from './ImportStudents';
 import FaceImport from './FaceImport';
 import UserFaceModal, { FACE_STATUS } from './UserFaceModal';
 import BulkUserActions, { MAX_BULK } from './BulkUserActions';
 
 const PAGE_SIZES = [20, 50, 100];
-const EMPTY_FORM = { name: '', email: '', mssv: '', role: 'STUDENT', class: '', faculty: '', phone: '' };
+const EMPTY_FORM = { name: '', email: '', mssv: '', role: 'BTC', class: '', faculty: '', phone: '' };
 
+// Chỉ nhân sự có tài khoản. Người tham gia (STUDENT) không có tài khoản: BTC nhập họ
+// trong từng sự kiện / lớp; ở đây chỉ xem được qua bộ lọc "Người tham gia".
 const ROLE_OPTIONS = [
-  { value: 'STUDENT', label: 'Sinh viên' },
   { value: 'BTC', label: 'Ban tổ chức' },
-  { value: 'LECTURER', label: 'Giảng viên' },
   { value: 'ADMIN', label: 'Admin' },
 ];
-const ROLE_FILTERS = [{ value: '', label: 'Tất cả' }, ...ROLE_OPTIONS];
+const ROLE_FILTERS = [
+  { value: '', label: 'Nhân sự' },
+  ...ROLE_OPTIONS,
+  { value: 'STUDENT', label: 'Người tham gia' },
+];
 const STATUS_TABS = [
   { value: '', label: 'Tất cả' },
   { value: 'active', label: 'Hoạt động' },
@@ -47,13 +50,15 @@ function UserFormFields({ state, setState }) {
         {(id) => <Input id={id} placeholder="Nguyễn Văn An" value={state.name} onChange={set('name')} />}
       </Field>
       <Field label="Email" required>
-        {(id) => <Input id={id} type="email" placeholder="sv@fpt.edu.vn" value={state.email} onChange={set('email')} />}
+        {(id) => <Input id={id} type="email" placeholder="ten@fpt.edu.vn" value={state.email} onChange={set('email')} />}
       </Field>
       <div className="grid gap-5 sm:grid-cols-2">
-        <Field label="Vai trò">
-          {(id) => <Select id={id} value={state.role} options={ROLE_OPTIONS} onChange={(role) => setState({ ...state, role })} />}
-        </Field>
-        <Field label="MSSV" hint="Không bắt buộc với BTC, giảng viên">
+        {state.role !== 'STUDENT' && (
+          <Field label="Vai trò">
+            {(id) => <Select id={id} value={state.role} options={ROLE_OPTIONS} onChange={(role) => setState({ ...state, role })} />}
+          </Field>
+        )}
+        <Field label="MSSV" optional>
           {(id) => <Input id={id} placeholder="SE123456" value={state.mssv} onChange={set('mssv')} />}
         </Field>
         <Field label="Lớp" optional>
@@ -91,7 +96,6 @@ export default function UserManagement() {
   const [selectingAll, setSelectingAll] = useState(false);
 
   const [createModal, setCreateModal] = useState(false);
-  const [importModal, setImportModal] = useState(false);
   const [faceImportModal, setFaceImportModal] = useState(false);
   const [faceUser, setFaceUser] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -233,7 +237,7 @@ export default function UserManagement() {
       name: u.name || '',
       email: u.email || '',
       mssv: u.mssv || '',
-      role: u.role || 'STUDENT',
+      role: u.role || 'BTC',
       class: u.class || '',
       faculty: u.faculty || '',
       phone: u.phone || '',
@@ -246,7 +250,9 @@ export default function UserManagement() {
     if (!editForm.name || !editForm.email) return toast.error('Nhập đầy đủ tên và email');
     setSaving(true);
     try {
-      await adminApi.updateUser(editUser.id, editForm);
+      // Người tham gia không có vai trò để đổi — không gửi role (backend chỉ nhận vai trò nhân sự).
+      const { role, ...rest } = editForm;
+      await adminApi.updateUser(editUser.id, editUser.role === 'STUDENT' ? rest : { ...rest, role });
       toast.success('Cập nhật thành công');
       setEditModal(false);
       setEditUser(null);
@@ -490,9 +496,6 @@ export default function UserManagement() {
       title="Người dùng"
       headerRight={(
         <>
-          <Button size="hdr" icon={Upload} aria-label="Import Excel" onClick={() => setImportModal(true)}>
-            <span className="hidden sm:inline">Import Excel</span>
-          </Button>
           <Button size="hdr" icon={ScanFace} aria-label="Import ảnh khuôn mặt" onClick={() => setFaceImportModal(true)}>
             <span className="hidden sm:inline">Ảnh khuôn mặt</span>
           </Button>
@@ -633,11 +636,6 @@ export default function UserManagement() {
             </p>
           </form>
         )}
-      </Modal>
-
-      {/* Import */}
-      <Modal open={importModal} onClose={() => setImportModal(false)} title="Import sinh viên từ Excel" size="sm">
-        <ImportStudents onSuccess={() => { setImportModal(false); setPage(1); load(1); }} />
       </Modal>
 
       {/* Import ảnh thẻ để check-in bằng khuôn mặt */}

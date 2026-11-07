@@ -1,7 +1,6 @@
 const { test, afterEach } = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
-const jwt = require('jsonwebtoken');
 const prisma = require('../src/lib/prisma');
 const emailService = require('../src/services/email.service');
 const app = require('../src/app');
@@ -56,147 +55,100 @@ const post = (body) => request(app).post('/api/public/events/evt-1/register').se
 
 afterEach(() => restoreStubs());
 
-// ── Tạo tài khoản mới ──────────────────────────────────────────
+// Người tham gia dùng chung theo email, không có tài khoản (lib/participants.js).
+// findMany lần 1 (where.OR) = tra người đã có; lần 2 = lấy lại người vừa createMany.
+function mockPeople({ existing = [] } = {}) {
+  const created = [];
+  const createMany = stubMethod(prisma.user, 'createMany', async ({ data }) => {
+    data.forEach((d) => created.push({ id: `new-${created.length + 1}`, ...d }));
+    return { count: data.length };
+  });
+  stubMethod(prisma.user, 'findMany', async ({ where }) => (where.OR ? existing : created));
+  const update = stubMethod(prisma.user, 'update', async ({ data }) => data);
+  return { createMany, update };
+}
 
-test('người chưa có trong hệ thống được tạo tài khoản mới và thêm vào danh sách', async () => {
+// ── Người mới ──────────────────────────────────────────────────
+
+test('người mới được thêm vào danh sách mà KHÔNG tạo mật khẩu đăng nhập', async () => {
   mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => []);
-  const createUser = stubMethod(prisma.user, 'create', async ({ data }) => ({
-    id: 'u-new', email: data.email, mssv: data.mssv, name: data.name, isActive: true,
-  }));
-  const { createMany, attendance } = mockJoin();
-  const sendMail = mockEmailOk();
+  const { createMany: createUsers } = mockPeople();
+  const { createMany } = mockJoin();
+  const mail = mockEmailOk();
 
-  const res = await post();
+  const res = await post({ email: ' A@FPT.edu.vn ', mssv: 'se170001' });
 
   assert.strictEqual(res.status, 201);
-  assert.strictEqual(res.body.success, true);
-  assert.strictEqual(res.body.isNewAccount, true);
-  assert.strictEqual(res.body.alreadyRegistered, false);
-  assert.strictEqual(res.body.data.user.email, 'a@fpt.edu.vn');
-
-  // Tài khoản mới: STUDENT, buộc đổi mật khẩu, có hash chứ không lưu mật khẩu thô.
-  const created = createUser.calls[0][0].data;
-  assert.strictEqual(created.role, 'STUDENT');
-  assert.strictEqual(created.isFirstLogin, true);
-  assert.ok(created.passwordHash && created.passwordHash.startsWith('$2'));
-  assert.ok(!('password' in created));
-
-  // Được ghi vào danh sách tham gia + có bản ghi điểm danh REGISTERED.
-  assert.deepStrictEqual(createMany.calls[0][0].data, [{ eventId: 'evt-1', userId: 'u-new' }]);
-  assert.strictEqual(createMany.calls[0][0].skipDuplicates, true);
-  assert.deepStrictEqual(attendance.calls[0][0].data, [{ eventId: 'evt-1', userId: 'u-new', status: 'REGISTERED' }]);
-  assert.strictEqual(attendance.calls[0][0].skipDuplicates, true);
-
-  // Mật khẩu tạm chỉ đi qua email, không trả về response.
-  assert.ok(sendMail.calls[0][3].tempPassword);
-  assert.ok(!JSON.stringify(res.body).includes(sendMail.calls[0][3].tempPassword));
-});
-
-test('email/mssv được chuẩn hoá trước khi lưu', async () => {
-  mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => []);
-  const createUser = stubMethod(prisma.user, 'create', async ({ data }) => ({
-    id: 'u-new', email: data.email, mssv: data.mssv, name: data.name, isActive: true,
-  }));
-  mockJoin();
-  mockEmailOk();
-
-  await post({ email: '  A@FPT.EDU.VN ', mssv: ' se170001 ', name: '  Nguyễn   Văn A ' });
-
-  const created = createUser.calls[0][0].data;
-  assert.strictEqual(created.email, 'a@fpt.edu.vn');
-  assert.strictEqual(created.mssv, 'SE170001');
-  assert.strictEqual(created.name, 'Nguyễn Văn A');
+  const [person] = createUsers.calls[0][0].data;
+  assert.strictEqual(person.email, 'a@fpt.edu.vn');
+  assert.strictEqual(person.mssv, 'SE170001');
+  assert.strictEqual(person.role, 'STUDENT');
+  assert.strictEqual(person.passwordHash, '!');
+  assert.strictEqual(createMany.calls[0][0].data[0].userId, 'new-1');
+  // Email xác nhận không còn tham số tài khoản/mật khẩu.
+  assert.strictEqual(mail.calls[0].length, 3);
+  assert.strictEqual(res.body.isNewAccount, undefined);
+  assert.strictEqual(JSON.stringify(res.body).includes('assword'), false);
 });
 
 test('gửi email lỗi vẫn giữ đăng ký, chỉ báo emailSent=false', async () => {
   mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => []);
-  stubMethod(prisma.user, 'create', async () => ({ id: 'u-new', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'A', isActive: true }));
-  const { createMany } = mockJoin();
+  mockPeople();
+  mockJoin();
   stubMethod(emailService, 'sendEventRegistrationEmail', async () => { throw new Error('brevo down'); });
 
   const res = await post();
 
   assert.strictEqual(res.status, 201);
-  assert.strictEqual(res.body.success, true);
   assert.strictEqual(res.body.emailSent, false);
-  assert.strictEqual(createMany.calls.length, 1);
 });
 
-// ── Tài khoản đã tồn tại ───────────────────────────────────────
+// ── Người đã có ────────────────────────────────────────────────
 
-test('người đã có tài khoản thì dùng lại, không tạo user mới', async () => {
+test('email đã có thì dùng lại người đó, chỉ bổ sung MSSV còn trống, không đổi tên', async () => {
   mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'Nguyễn Văn A', isActive: true },
-  ]);
-  stubMethod(prisma.user, 'create', async () => { throw new Error('user.create must not be called'); });
+  const { createMany: createUsers, update } = mockPeople({
+    existing: [{ id: 'u-1', email: 'a@fpt.edu.vn', mssv: null, phone: null, isActive: true }],
+  });
   const { createMany } = mockJoin();
-  const sendMail = mockEmailOk();
+  mockEmailOk();
 
-  const res = await post();
+  const res = await post({ name: 'Tên Khác Hẳn' });
 
   assert.strictEqual(res.status, 201);
-  assert.strictEqual(res.body.isNewAccount, false);
+  assert.strictEqual(createUsers.calls.length, 0);
   assert.strictEqual(createMany.calls[0][0].data[0].userId, 'u-1');
-  assert.strictEqual(sendMail.calls[0][3].tempPassword, null);
+  assert.deepStrictEqual(update.calls[0][0].data, { mssv: 'SE170001' });
 });
 
-test('đăng ký lại sự kiện đã tham gia trả về alreadyRegistered', async () => {
+test('đăng ký lại sự kiện đã tham gia trả về alreadyRegistered, không gửi email', async () => {
   mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'A', isActive: true },
-  ]);
+  mockPeople({ existing: [{ id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', phone: null, isActive: true }] });
   mockJoin({ memberCount: 0 });
-  mockEmailOk();
+  const mail = mockEmailOk();
 
   const res = await post();
 
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.success, true);
   assert.strictEqual(res.body.alreadyRegistered, true);
-});
-
-test('tài khoản chưa có MSSV thì được bổ sung, không ghi đè tên sẵn có', async () => {
-  mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: null, name: 'Tên Cũ', isActive: true },
-  ]);
-  const update = stubMethod(prisma.user, 'update', async () => ({
-    id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'Tên Cũ', isActive: true,
-  }));
-  mockJoin();
-  mockEmailOk();
-
-  const res = await post();
-
-  assert.strictEqual(res.status, 201);
-  assert.strictEqual(update.calls[0][0].data.mssv, 'SE170001');
-  assert.ok(!('name' in update.calls[0][0].data));
-  assert.strictEqual(res.body.data.user.name, 'Tên Cũ');
-});
-
-test('email đã gắn với MSSV khác bị chặn 409', async () => {
-  mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE999999', name: 'A', isActive: true },
-  ]);
-  const { createMany } = mockJoin();
-
-  const res = await post();
-
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(res.body.success, false);
-  assert.strictEqual(createMany.calls.length, 0);
+  assert.strictEqual(mail.calls.length, 0);
 });
 
 test('MSSV đã gắn với email khác bị chặn 409', async () => {
   mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'khac@fpt.edu.vn', mssv: 'SE170001', name: 'A', isActive: true },
-  ]);
+  mockPeople({ existing: [{ id: 'u-2', email: 'khac@fpt.edu.vn', mssv: 'SE170001', phone: null, isActive: true }] });
+  const { createMany } = mockJoin();
+
+  const res = await post();
+
+  assert.strictEqual(res.status, 409);
+  assert.match(res.body.message, /MSSV SE170001/);
+  assert.strictEqual(createMany.calls.length, 0);
+});
+
+test('người đã bị khoá không đăng ký được', async () => {
+  mockEvent();
+  mockPeople({ existing: [{ id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', phone: null, isActive: false }] });
   const { createMany } = mockJoin();
 
   const res = await post();
@@ -204,35 +156,6 @@ test('MSSV đã gắn với email khác bị chặn 409', async () => {
   assert.strictEqual(res.status, 409);
   assert.strictEqual(createMany.calls.length, 0);
 });
-
-test('email và MSSV trỏ về hai tài khoản khác nhau bị chặn 409', async () => {
-  mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE111111', name: 'A', isActive: true },
-    { id: 'u-2', email: 'b@fpt.edu.vn', mssv: 'SE170001', name: 'B', isActive: true },
-  ]);
-  const { createMany } = mockJoin();
-
-  const res = await post();
-
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(createMany.calls.length, 0);
-});
-
-test('tài khoản bị khoá không đăng ký được', async () => {
-  mockEvent();
-  stubMethod(prisma.user, 'findMany', async () => [
-    { id: 'u-1', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'A', isActive: false },
-  ]);
-  const { createMany } = mockJoin();
-
-  const res = await post();
-
-  assert.strictEqual(res.status, 403);
-  assert.strictEqual(createMany.calls.length, 0);
-});
-
-// ── Validate đầu vào & trạng thái sự kiện ──────────────────────
 
 test('thiếu hoặc sai thông tin bắt buộc trả 400 và không đụng tới DB', async () => {
   for (const body of [{ name: '' }, { name: 'A' }, { mssv: '' }, { email: 'khong-phai-email' }]) {
@@ -313,8 +236,7 @@ test('danh sách công khai chỉ lấy sự kiện đang mở đăng ký và ch
 
 test('sự kiện không đặt hạn đăng ký (checkinClose null) vẫn coi là đang mở', async () => {
   mockEvent({ checkinClose: null, allowRegistration: true });
-  stubMethod(prisma.user, 'findMany', async () => []);
-  stubMethod(prisma.user, 'create', async () => ({ id: 'u-new', email: 'a@fpt.edu.vn', mssv: 'SE170001', name: 'A', isActive: true }));
+  mockPeople();
   const { createMany } = mockJoin();
   mockEmailOk();
 
@@ -324,27 +246,9 @@ test('sự kiện không đặt hạn đăng ký (checkinClose null) vẫn coi l
   assert.strictEqual(createMany.calls.length, 1);
 });
 
-// ── Tự đăng ký khi đã đăng nhập ────────────────────────────────
+// ── Tự đăng ký bằng tài khoản đã bỏ (người tham gia không đăng nhập) ──────
 
-test('người đã đăng nhập tự đăng ký bằng chính tài khoản của mình', async () => {
-  const token = jwt.sign({ userId: 'student-1' }, process.env.JWT_SECRET);
-  stubMethod(prisma.user, 'findUnique', async () => ({
-    id: 'student-1', mssv: 'SE170001', email: 'a@fpt.edu.vn', name: 'A', role: 'STUDENT', isActive: true, isFirstLogin: false,
-  }));
-  mockEvent();
-  const { createMany } = mockJoin();
-
-  const res = await request(app)
-    .post('/api/events/evt-1/register')
-    .set('Authorization', `Bearer ${token}`)
-    .send({});
-
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.success, true);
-  assert.strictEqual(createMany.calls[0][0].data[0].userId, 'student-1');
-});
-
-test('tự đăng ký khi chưa đăng nhập bị chặn 401', async () => {
+test('đường tự đăng ký bằng tài khoản không còn', async () => {
   const res = await request(app).post('/api/events/evt-1/register').send({});
-  assert.strictEqual(res.status, 401);
+  assert.notStrictEqual(res.status, 200);
 });

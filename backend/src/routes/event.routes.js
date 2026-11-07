@@ -3,12 +3,14 @@ const { authenticate, authorize } = require('../middleware/auth');
 const {
   listEvents, createEvent, getEvent, updateEvent, deleteEvent,
   getQRToken, getLiveCheckins, getAttendance, manualCheckin, undoCheckin,
-  listMembers, addMembers, removeMember, searchUsersForEvent,
+  listMembers, addMembers, importMembers, removeMember,
   listClasses, addMembersByClass,
 } = require('../controllers/event.controller');
-const { registerSelf } = require('../controllers/registration.controller');
 const { getReminders, sendReminderNow } = require('../controllers/reminder.controller');
-const { getFaceGallery, getFaceThumbnail, faceCheckin } = require('../controllers/face.controller');
+const {
+  getFaceGallery, getFaceThumbnail, faceCheckin,
+  getParticipantFace, setParticipantFace, deleteParticipantFace,
+} = require('../controllers/face.controller');
 const multer = require('multer');
 const { getPublicFormSetup, savePublicForm, addCheckinByStaff } = require('../controllers/publicCheckin.controller');
 const {
@@ -38,6 +40,7 @@ function memoryUpload(tooLargeMessage, failMessage) {
   });
 }
 const uploadCertificateImage = memoryUpload('Ảnh mẫu tối đa 5MB', 'Upload ảnh thất bại');
+// Dùng cho cả file khách mời lẫn file danh sách tham gia.
 const uploadGuestFile = memoryUpload('File danh sách tối đa 5MB', 'Upload file thất bại');
 
 router.use(authenticate);
@@ -59,15 +62,18 @@ router.get('/:id/face-gallery', authorize('ADMIN', 'BTC'), getFaceGallery);
 router.get('/:id/face-gallery/:userId/thumbnail', authorize('ADMIN', 'BTC'), getFaceThumbnail);
 router.post('/:id/face-checkin', authorize('ADMIN', 'BTC'), faceCheckin);
 
-// Người dùng đã đăng nhập tự ghi tên vào danh sách tham gia.
-router.post('/:id/register', registerSelf);
-
+// Danh sách tham gia: người tham gia không có tài khoản — BTC nhập bằng email + họ tên
+// (lib/participants.js). Các đường /members/<chữ> phải đăng ký TRƯỚC /members/:userId.
 router.get('/:id/members', authorize('ADMIN', 'BTC', 'LECTURER'), listMembers);
-router.get('/:id/members/search', authorize('ADMIN', 'BTC'), searchUsersForEvent);
 router.get('/:id/classes', authorize('ADMIN', 'BTC'), listClasses);
 router.post('/:id/members', authorize('ADMIN', 'BTC'), addMembers);
+router.post('/:id/members/import', authorize('ADMIN', 'BTC'), uploadGuestFile, importMembers);
 router.post('/:id/members/by-class', authorize('ADMIN', 'BTC'), addMembersByClass);
 router.delete('/:id/members/:userId', authorize('ADMIN', 'BTC'), removeMember);
+// Ảnh khuôn mặt của từng người trong danh sách, cho kiosk check-in khuôn mặt.
+router.get('/:id/members/:userId/face-profile', authorize('ADMIN', 'BTC'), getParticipantFace);
+router.put('/:id/members/:userId/face-profile', authorize('ADMIN', 'BTC'), setParticipantFace);
+router.delete('/:id/members/:userId/face-profile', authorize('ADMIN', 'BTC'), deleteParticipantFace);
 
 // Nhắc lịch qua email — BTC gửi thủ công, không có nhắc tự động.
 router.get('/:id/reminders', authorize('ADMIN', 'BTC'), getReminders);

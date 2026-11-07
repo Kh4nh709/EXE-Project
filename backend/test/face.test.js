@@ -11,8 +11,6 @@ afterEach(() => restoreStubs());
 
 const btcToken = jwt.sign({ userId: 'btc-1' }, process.env.JWT_SECRET);
 const BTC_USER = { id: 'btc-1', mssv: null, email: 'btc@b.c', name: 'BTC One', role: 'BTC', isActive: true, isFirstLogin: false };
-const studentToken = jwt.sign({ userId: 'stu-1' }, process.env.JWT_SECRET);
-const STUDENT = { id: 'stu-1', mssv: 'SE1', email: 's@b.c', name: 'An', role: 'STUDENT', isActive: true, isFirstLogin: false };
 const adminToken = jwt.sign({ userId: 'admin-1' }, process.env.JWT_SECRET);
 const ADMIN = { id: 'admin-1', mssv: null, email: 'a@b.c', name: 'Admin', role: 'ADMIN', isActive: true, isFirstLogin: false };
 
@@ -75,61 +73,6 @@ test('findDuplicateIn ignores the same user and finds a lookalike of another', (
 });
 
 // ── sinh viên tự đăng ký ─────────────────────────────────────────
-
-test('student save: consent is mandatory', async () => {
-  stubMethod(prisma.user, 'findUnique', async () => STUDENT);
-  const upsert = stubMethod(prisma.faceProfile, 'upsert', async () => ({}));
-  const res = await request(app).post('/api/me/face-profile').set('Authorization', `Bearer ${studentToken}`)
-    .send({ embedding: b64(vectorFor(1)) });
-  assert.strictEqual(res.status, 400);
-  assert.strictEqual(res.body.error, 'FACE_CONSENT_REQUIRED');
-  assert.strictEqual(upsert.calls.length, 0);
-});
-
-test('student save: lookalike of another account → 409 FACE_DUPLICATE', async () => {
-  stubMethod(prisma.user, 'findUnique', async () => STUDENT);
-  stubMethod(prisma.faceProfile, 'findUnique', async () => null);
-  stubMethod(prisma.faceProfile, 'findMany', async () => [{ userId: 'other', embedding: bytes(vectorFor(7)) }]);
-  const upsert = stubMethod(prisma.faceProfile, 'upsert', async () => ({}));
-  const res = await request(app).post('/api/me/face-profile').set('Authorization', `Bearer ${studentToken}`)
-    .send({ embedding: b64(vectorFor(7, 0.02)), consent: true });
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(res.body.error, 'FACE_DUPLICATE');
-  assert.strictEqual(upsert.calls.length, 0);
-});
-
-test('student save: must match the imported photo if there is one', async () => {
-  stubMethod(prisma.user, 'findUnique', async () => STUDENT);
-  stubMethod(prisma.faceProfile, 'findUnique', async () => ({
-    userId: 'stu-1', model: face.FACE_MODEL, source: 'IMPORT', importEmbedding: bytes(vectorFor(1)), consentAt: null,
-  }));
-  stubMethod(prisma.faceProfile, 'findMany', async () => []);
-  const res = await request(app).post('/api/me/face-profile').set('Authorization', `Bearer ${studentToken}`)
-    .send({ embedding: b64(vectorFor(2)), consent: true });
-  assert.strictEqual(res.status, 400);
-  assert.strictEqual(res.body.error, 'FACE_MISMATCH');
-});
-
-test('student save: success stores SELF with consent', async () => {
-  stubMethod(prisma.user, 'findUnique', async () => STUDENT);
-  stubMethod(prisma.faceProfile, 'findUnique', async () => null);
-  stubMethod(prisma.faceProfile, 'findMany', async () => [{ userId: 'other', embedding: bytes(vectorFor(2)) }]);
-  const upsert = stubMethod(prisma.faceProfile, 'upsert', async (args) => ({ ...args.create, updatedAt: new Date() }));
-  const res = await request(app).post('/api/me/face-profile').set('Authorization', `Bearer ${studentToken}`)
-    .send({ embedding: b64(vectorFor(1)), thumbnail: JPEG, consent: true });
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.data.status, 'active');
-  const { create } = upsert.calls[0][0];
-  assert.strictEqual(create.source, 'SELF');
-  assert.ok(create.consentAt instanceof Date);
-  assert.strictEqual(create.model, face.FACE_MODEL);
-});
-
-test('face-profile routes are STUDENT only', async () => {
-  stubMethod(prisma.user, 'findUnique', async () => BTC_USER);
-  const res = await request(app).get('/api/me/face-profile').set('Authorization', `Bearer ${btcToken}`);
-  assert.strictEqual(res.status, 403);
-});
 
 // ── admin import ─────────────────────────────────────────────────
 
@@ -250,6 +193,42 @@ test('admin face endpoints are ADMIN-only', async () => {
   stubMethod(prisma.user, 'findUnique', async () => BTC_USER);
   const res = await request(app).delete('/api/admin/users/u1/face-profile').set('Authorization', `Bearer ${btcToken}`);
   assert.strictEqual(res.status, 403);
+});
+
+// ── BTC đặt khuôn mặt cho người trong danh sách sự kiện của mình ─────────────
+
+function participantFace({ member = true, event = openEvent() } = {}) {
+  stubMethod(prisma.user, 'findUnique', async ({ where }) => (where.id === 'btc-1' ? BTC_USER : { id: where.id, role: 'STUDENT' }));
+  stubMethod(prisma.event, 'findUnique', async () => event);
+  stubMethod(prisma.eventMember, 'findUnique', async () => (member ? { userId: 'u1' } : null));
+  stubMethod(prisma.faceProfile, 'findMany', async () => []);
+  return stubMethod(prisma.faceProfile, 'upsert', async ({ update }) => ({ ...update, updatedAt: new Date() }));
+}
+
+test('BTC sets a face for someone on their event list — active immediately', async () => {
+  const upsert = participantFace();
+  const res = await request(app).put('/api/events/evt-1/members/u1/face-profile').set('Authorization', `Bearer ${btcToken}`)
+    .send({ embedding: b64(vectorFor(1)), thumbnail: JPEG });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.data.status, 'active');
+  assert.strictEqual(upsert.calls[0][0].where.userId, 'u1');
+});
+
+test('BTC cannot set a face for someone outside the event list', async () => {
+  const upsert = participantFace({ member: false });
+  const res = await request(app).put('/api/events/evt-1/members/u1/face-profile').set('Authorization', `Bearer ${btcToken}`)
+    .send({ embedding: b64(vectorFor(1)), thumbnail: JPEG });
+  assert.strictEqual(res.status, 404);
+  assert.strictEqual(res.body.error, 'NOT_A_MEMBER');
+  assert.strictEqual(upsert.calls.length, 0);
+});
+
+test('BTC cannot manage faces on an event they did not create', async () => {
+  const upsert = participantFace({ event: openEvent({ createdById: 'btc-2' }) });
+  const res = await request(app).put('/api/events/evt-1/members/u1/face-profile').set('Authorization', `Bearer ${btcToken}`)
+    .send({ embedding: b64(vectorFor(1)), thumbnail: JPEG });
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(upsert.calls.length, 0);
 });
 
 test('admin import: rejects batches over the cap', async () => {

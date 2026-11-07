@@ -31,6 +31,7 @@ model User {
   attendances        Attendance[]
   fraudLogs          FraudLog[]
   eventMembers       EventMember[]
+  classMemberships   ClassMember[]
   createdClasses     Class[]            @relation("ClassCreator")
   feedbackTemplates  FeedbackTemplate[] @relation("FeedbackTemplateCreator")
   feedbackResponses  FeedbackResponse[]
@@ -164,11 +165,30 @@ model Class {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  createdBy User    @relation("ClassCreator", fields: [createdById], references: [id])
+  createdBy User          @relation("ClassCreator", fields: [createdById], references: [id])
   sessions  Event[]
+  members   ClassMember[]
 
   @@index([isActive])
   @@map("attendance_classes")
+}
+
+// Danh sách của lớp (spec 2026-11-07-participant-lists-design.md). Thay cho việc ghép
+// theo chuỗi User.class: một người học nhiều lớp môn cùng lúc, và người tham gia giờ là
+// bản ghi ẩn dùng chung theo email nên không thể mang "lớp" của riêng một BTC.
+// Tạo buổi học = chép danh sách này vào danh sách tham gia của buổi.
+model ClassMember {
+  id        String   @id @default(cuid())
+  classId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, userId])
+  @@index([userId])
+  @@map("attendance_class_members")
 }
 
 model EventMember {

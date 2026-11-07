@@ -41,8 +41,19 @@ where the whole router shares a role. `/api/public/*` is the only unauthenticate
   `CLOSED` (manual overrides ignore the window). `checkin.controller` enforces it and
   `event.controller` ships `gateSummary(event)` to the frontend as `event.gate` — the frontend
   cannot derive this itself, so any new event-returning endpoint should attach it too.
-- `lib/eventMembership.js` — every path into an event's participant list (self-registration,
-  organizer add, add-whole-class) must go through `addUsersToEvent`, which writes both an
+- `lib/participants.js` — **participants have no login account** (since 2026-11-07; only ADMIN/BTC
+  log in). BTC types/pastes/imports email + name (MSSV optional) per event or class; behind each
+  email is ONE shared `User` row (`role 'STUDENT'` kept as the enum name, `passwordHash '!'` so
+  bcrypt never matches). Every import path goes through `upsertParticipants` (re-importing an email
+  keeps the existing name/MSSV and only fills blanks — rows are shared across BTCs) and answers
+  `{ added, alreadyIn, created, skipped: [{ line, email, reason }] }` with 200 on partial success.
+  Nothing returns a STUDENT for login: `login` and forgot/reset filter `role: { not: 'STUDENT' }`,
+  `middleware/auth.js` 401s a STUDENT JWT, admin can't create/reset/promote one (`NOT_STAFF`).
+  There is no "search all users to add" endpoint on purpose (it leaked other BTCs' lists).
+  Classes hold their own roster in `ClassMember`; a new session copies it.
+  Spec: `docs/superpowers/specs/2026-11-07-participant-lists-design.md`.
+- `lib/eventMembership.js` — every path into an event's participant list (public registration,
+  organizer import, add-whole-class) must go through `addUsersToEvent`, which writes both an
   `EventMember` row and a `REGISTERED` `Attendance` row in one transaction. Writing only one
   desyncs the check-in whitelist from the attendance sheet/export.
 - `lib/eventAccess.js` — `loadEventForWrite(req, res)` for the ADMIN-or-creator rule; returns
@@ -122,13 +133,13 @@ where the whole router shares a role. `/api/public/*` is the only unauthenticate
   `faceEngine` falls back to the main thread only when the browser can't run it in a worker.
   The server never runs ML: `lib/faceProfile.js` only stores and compares vectors, and its
   `similarity` + thresholds must stay identical to `pages/face/faceMatch.js`. Changing the model or
-  config means bumping `FACE_MODEL`. The kiosk uses only profiles with `consentAt`: a student's own
-  capture requires ticking consent, while every admin-set photo — batch import (`POST /api/admin/face-profiles/import`, `overwrite`
-  to replace self-taken ones) or per-user from UserManagement (`/api/admin/users/:id/face-profile`) — goes
-  through `adminProfileData` and is **active immediately** (product-owner decision 2026-11-05: the school
-  owns the legal basis for photos it supplies; students can still delete theirs at `/khuon-mat`).
-  Students manage their profile at `/khuon-mat` (`/api/me/face-profile`). Saving rejects lookalikes of
-  other accounts (`FACE_DUPLICATE`) to stop proxy attendance.
+  config means bumping `FACE_MODEL`. The kiosk uses only profiles with `consentAt`. Photos are set by
+  staff only (participants have no account, so self-capture `/khuon-mat` is gone): BTC per person in
+  their event's list (`/api/events/:id/members/:userId/face-profile`, member-only), admin batch import
+  (`POST /api/admin/face-profiles/import`) or per user (`/api/admin/users/:id/face-profile`). All go
+  through `adminProfileData` and are **active immediately** (product-owner decision 2026-11-05: the
+  school owns the legal basis for photos it supplies). Saving rejects lookalikes of other people
+  (`FACE_DUPLICATE`) to stop proxy attendance.
   Spec: `docs/superpowers/specs/2026-10-22-face-checkin-design.md`.
 - `lib/datetime.js` — **every** user-facing timestamp on the backend (reports, Excel, emails,
   check-in messages) must be formatted here. `toLocaleString('vi-VN')` without an explicit
@@ -156,6 +167,9 @@ one email per event. Pass errors are `400 PASS_INVALID`, never 401 (`api.js` log
 A device that already checked in someone else at an event gets `DEVICE_USED_BY_OTHER` on both paths.
 Spec: `docs/superpowers/specs/2026-11-07-otp-checkin-design.md`. Rejections that
 indicate abuse are written to `FraudLog` via a best-effort `logFraud` that never throws.
+Certificate emails carry a per-certificate HMAC link `/chung-nhan/:token` (`lib/certificateLink.js`,
+`/api/public/certificates/:token`) because recipients have no account; revoking deletes the row so
+the link dies with it.
 BTC can undo one person's check-in (`DELETE /api/events/:id/attendance/:userId/checkin`, from the
 attendance tab and the face kiosk): the row goes back to `REGISTERED` (never deleted — see
 `eventMembership`), check-out is cleared with it, and it is refused (`CERTIFICATE_ISSUED`) until any
@@ -181,20 +195,19 @@ column back to NULL — that revocability is why this is a DB column and not a s
 JWT (1 day default) + a `localStorage` device UUID sent as `X-Device-ID`. Logging in from a device
 other than the trusted binding triggers an emailed OTP (`purpose: 'DEVICE_BIND'`) before a token is
 issued. 5 failed passwords lock an account 15 minutes (`failedLoginAttempts`/`lockedUntil`).
-Students may log in without a password at all via `/api/auth/login-otp/request` +
-`/login-otp/verify` (emailed 6-digit code, bound to the requesting device, 10 min). That path is
-**STUDENT-only** on purpose — for ADMIN/BTC/LECTURER an inbox takeover would otherwise be a full
-account takeover. `/api/auth/forgot-password` + `/reset-password` use the same `OtpToken` table
-with `purpose: 'PASSWORD_RESET'`. Both flows answer identically whether or not the account exists,
-so they cannot be used to enumerate emails/MSSV.
+Only staff (ADMIN/BTC/LECTURER) have accounts — participants check in via QR + emailed OTP
+(see Check-in flow) and are never returned by any login path (`lib/participants.js`).
+`/api/auth/forgot-password` + `/reset-password` use the `OtpToken` table with
+`purpose: 'PASSWORD_RESET'` and answer identically whether or not the account exists, so they
+cannot be used to enumerate emails.
 `middleware/auth.js` deliberately splits failure modes: bad/expired JWT → 401, DB unreachable → 503
 so a database blip does not log everyone out. The frontend mirrors this: `services/api.js` retries
 503/timeout twice (free-tier cold starts) but logs out on 401.
 
 ### Data model notes (`prisma/schema.prisma`)
-All tables are prefixed `attendance_` via `@@map` — the Supabase project is shared. `Class.name` is
-the source of truth for a class name and renaming a class rewrites the free-text `User.class` string
-on every member. A `Class` session is an `Event` with `classId` set, created via
+All tables are prefixed `attendance_` via `@@map` — the Supabase project is shared. A class's roster is
+`ClassMember` (by id, so renaming a class touches nothing else; `User.class` is free text only).
+A `Class` session is an `Event` with `classId` set, created via
 `POST /api/classes/:id/sessions`. `prisma/supabase-setup.sql` is the hand-maintained SQL applied in
 the Supabase SQL editor; when you change the schema, update it alongside `schema.prisma`.
 

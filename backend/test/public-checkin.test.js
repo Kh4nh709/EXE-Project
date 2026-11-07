@@ -15,7 +15,8 @@ const { stubMethod, restoreStubs } = require('../testenv');
 
 const USERS = {
   'btc-1': { id: 'btc-1', mssv: null, email: 'btc@f.c', name: 'Trần BTC', role: 'BTC', isActive: true, isFirstLogin: false },
-  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'An', role: 'STUDENT', isActive: true, isFirstLogin: false },
+  // Người tham gia không đăng nhập (2026-11-07): người dùng không phải BTC giờ là nhân sự khác.
+  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'An', role: 'LECTURER', isActive: true, isFirstLogin: false },
 };
 const auth = (id) => `Bearer ${jwt.sign({ userId: id }, process.env.JWT_SECRET)}`;
 const loginAs = () => stubMethod(prisma.user, 'findUnique', async ({ where }) => USERS[where.id] || null);

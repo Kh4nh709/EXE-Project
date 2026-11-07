@@ -257,7 +257,7 @@ export default function EventFormFields({ form, setForm, inModal = false, canPic
               <div className="flex flex-col gap-4">
                 <Checkbox
                   label="Cho phép tự đăng ký tham gia"
-                  desc="Sinh viên tự đăng ký qua link công khai."
+                  desc="Người ngoài tự điền họ tên, MSSV, email qua link công khai để vào danh sách."
                   checked={form.allowRegistration}
                   onChange={(e) => set('allowRegistration', e.target.checked)}
                 />
@@ -268,8 +268,8 @@ export default function EventFormFields({ form, setForm, inModal = false, canPic
                   onChange={(e) => set('isWhitelisted', e.target.checked)}
                 />
                 <Checkbox
-                  label="Cho phép check-in bằng email, không cần đăng nhập"
-                  desc="Quét QR, nhập email, nhận mã 6 số qua email là check-in được. Mỗi điện thoại chỉ check-in cho một người."
+                  label="Cho phép check-in bằng email (quét QR)"
+                  desc="Người tham gia quét QR, nhập email, nhận mã 6 số qua email là check-in được. Mỗi điện thoại chỉ check-in cho một người. Tắt thì chỉ check-in bằng khuôn mặt hoặc BTC điểm danh tay."
                   checked={form.otpCheckinEnabled !== false}
                   onChange={(e) => set('otpCheckinEnabled', e.target.checked)}
                 />

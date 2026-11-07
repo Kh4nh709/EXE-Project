@@ -16,8 +16,17 @@ import { encodeEmbedding } from '../face/faceMatch';
 
 export const FACE_STATUS = {
   active: { tone: 'success', label: 'Đang dùng' },
-  'pending-consent': { tone: 'warning', label: 'Chờ SV đồng ý' },
+  'pending-consent': { tone: 'warning', label: 'Chờ đồng ý' },
   none: { tone: 'neutral', label: 'Chưa có' },
+};
+
+// Mặc định: admin quản lý theo người (/api/admin/users/:id/face-profile). BTC truyền
+// `api` theo sự kiện (/api/events/:id/members/:userId/face-profile) — chỉ người trong
+// danh sách sự kiện của mình.
+const ADMIN_FACE_API = {
+  get: (userId) => faceApi.getUserFace(userId),
+  set: (userId, data) => faceApi.setUserFace(userId, data),
+  remove: (userId) => faceApi.deleteUserFace(userId),
 };
 
 function FaceTile({ thumbnail, caption, alt }) {
@@ -36,7 +45,7 @@ function FaceTile({ thumbnail, caption, alt }) {
 }
 
 // user = null → đóng. onChanged(userId, status) để bảng cập nhật cột trạng thái tại chỗ.
-export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
+export default function UserFaceModal({ user: openUser, onClose, onChanged, api = ADMIN_FACE_API }) {
   // Giữ người vừa mở để nội dung không biến mất giữa chừng lúc modal chạy hiệu ứng đóng.
   const lastUser = useRef(openUser);
   if (openUser) lastUser.current = openUser;
@@ -55,7 +64,7 @@ export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
     setLoadError(false);
     setProfile(null);
     try {
-      const { data } = await faceApi.getUserFace(id);
+      const { data } = await api.get(id);
       setProfile(data.data);
     } catch {
       setLoadError(true);
@@ -91,7 +100,7 @@ export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
   const save = async () => {
     setSaving(true);
     try {
-      const { data } = await faceApi.setUserFace(user.id, candidate);
+      const { data } = await api.set(user.id, candidate);
       setProfile(data.data);
       setCandidate(null);
       toast.success(data.message);
@@ -111,7 +120,7 @@ export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
     }))) return;
     setDeleting(true);
     try {
-      const { data } = await faceApi.deleteUserFace(user.id);
+      const { data } = await api.remove(user.id);
       toast.success(data.message);
       setProfile({ status: 'none' });
       onChanged?.(user.id, 'none');
@@ -152,7 +161,7 @@ export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
             <Badge tone={badge.tone}>{badge.label}</Badge>
             {hasFace && (
               <p className="text-sm text-muted">
-                {profile.source === 'IMPORT' ? 'Ảnh do admin cung cấp' : 'Sinh viên tự chụp'}
+                {profile.source === 'IMPORT' ? 'Ảnh do Ban tổ chức cung cấp' : 'Người tham gia tự chụp'}
                 {profile.updatedAt && ` · ${format(new Date(profile.updatedAt), 'dd/MM/yyyy HH:mm')}`}
               </p>
             )}
@@ -166,7 +175,7 @@ export default function UserFaceModal({ user: openUser, onClose, onChanged }) {
               : 'Chọn một ảnh chụp chính diện, chỉ một khuôn mặt. Ảnh được xử lý ngay trên máy này; chỉ đặc trưng khuôn mặt và ảnh thu nhỏ được lưu.'}
           </p>
         ) : (
-          <Banner tone="info" compact title="Check-in bằng khuôn mặt chỉ dành cho tài khoản sinh viên" />
+          <Banner tone="info" compact title="Check-in bằng khuôn mặt chỉ dành cho người tham gia" />
         )}
 
         {!candidate && (

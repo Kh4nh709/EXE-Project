@@ -150,51 +150,12 @@ async function sendPasswordResetOtpEmail(email, name, otp) {
   });
 }
 
-// Mã đăng nhập không cần mật khẩu (sinh viên quét QR rồi chọn "Đăng nhập bằng
-// OTP"). Tách riêng khỏi sendOtpEmail vì ngữ cảnh khác hẳn: đây là đăng nhập,
-// không phải xác thực thiết bị mới sau khi đã nhập đúng mật khẩu.
-async function sendLoginOtpEmail(email, name, otp) {
-  assertConfigured();
-  await brevoRequest({
-    sender,
-    to: [{ email }],
-    subject: '[FPT Event] Mã đăng nhập của bạn',
-    htmlContent: `
-      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
-        <div style="background: linear-gradient(135deg, #1A6BFF, #00A3FF); padding: 32px; border-radius: 12px 12px 0 0; text-align: center;">
-          <h1 style="color: white; margin: 0; font-size: 24px;">FPT Event System</h1>
-        </div>
-        <div style="background: #fff; padding: 32px; border-radius: 0 0 12px 12px; border: 1px solid #e2eaff;">
-          <p style="color: #0d1b2e; font-size: 16px;">Xin chào <strong>${name}</strong>,</p>
-          <p style="color: #6b7b9a;">Mã đăng nhập của bạn:</p>
-          <div style="background: #f0f7ff; border-radius: 8px; padding: 24px; text-align: center; margin: 24px 0;">
-            <span style="font-size: 40px; font-weight: bold; letter-spacing: 12px; color: #1a6bff;">${otp}</span>
-          </div>
-          <p style="color: #6b7b9a; font-size: 14px;">Mã có hiệu lực trong <strong>10 phút</strong> và chỉ dùng được trên thiết bị vừa yêu cầu.</p>
-          <p style="color: #ff4d6a; font-size: 14px;">Nếu bạn không yêu cầu đăng nhập, hãy bỏ qua email này và đổi mật khẩu.</p>
-        </div>
-      </div>
-    `,
-  });
-}
-
-// Xác nhận đăng ký tham gia sự kiện. Nếu tài khoản vừa được tạo từ form đăng ký
-// thì kèm luôn mật khẩu tạm để người dùng đăng nhập quét QR điểm danh.
-async function sendEventRegistrationEmail(email, name, event, { mssv, tempPassword } = {}) {
+// Xác nhận đăng ký tham gia sự kiện. Người tham gia không có tài khoản nên không
+// có mật khẩu nào để gửi — chỉ dặn cách điểm danh bằng QR + mã email.
+async function sendEventRegistrationEmail(email, name, event) {
   assertConfigured();
 
-  const fmt = (d) => fmtDateTime(d, { dateStyle: 'full', timeStyle: 'short' });
-
-  const credentialsBlock = tempPassword
-    ? `
-          <div style="background: #fff8e6; border: 1px solid #ffe0a3; border-radius: 8px; padding: 20px; margin: 24px 0;">
-            <p style="margin: 0 0 8px; color: #6b7b9a; font-size: 14px;">Tài khoản đăng nhập vừa được tạo cho bạn:</p>
-            <p style="margin: 0 0 4px;"><strong>MSSV:</strong> ${mssv || '—'}</p>
-            <p style="margin: 0 0 4px;"><strong>Email:</strong> ${email}</p>
-            <p style="margin: 0;"><strong>Mật khẩu tạm:</strong> <span style="color: #1a6bff; font-family: monospace;">${tempPassword}</span></p>
-            <p style="margin: 12px 0 0; color: #ff4d6a; font-size: 13px;">Hãy đăng nhập và đổi mật khẩu trước khi sự kiện diễn ra.</p>
-          </div>`
-    : '';
+  const when = event.checkinOpen ? fmtDateTime(event.checkinOpen, { dateStyle: 'full', timeStyle: 'short' }) : null;
 
   await brevoRequest({
     sender,
@@ -206,14 +167,14 @@ async function sendEventRegistrationEmail(email, name, event, { mssv, tempPasswo
           <h1 style="color: white; margin: 0; font-size: 24px;">FPT Event System</h1>
         </div>
         <div style="background: #fff; padding: 32px; border-radius: 0 0 12px 12px; border: 1px solid #e2eaff;">
-          <p style="color: #0d1b2e; font-size: 16px;">Xin chào <strong>${name}</strong>,</p>
+          <p style="color: #0d1b2e; font-size: 16px;">Xin chào <strong>${escapeHtml(name)}</strong>,</p>
           <p style="color: #6b7b9a;">Bạn đã đăng ký tham gia sự kiện thành công. Thông tin chi tiết:</p>
           <div style="background: #f0f7ff; border-radius: 8px; padding: 20px; margin: 24px 0;">
-            <p style="margin: 0 0 6px; font-size: 17px;"><strong>${event.name}</strong></p>
-            <p style="margin: 0 0 4px; color: #6b7b9a;"><strong>Địa điểm:</strong> ${event.location}</p>
-            <p style="margin: 0; color: #6b7b9a;"><strong>Thời gian:</strong> ${fmt(event.checkinOpen)}</p>
-          </div>${credentialsBlock}
-          <p style="color: #6b7b9a; font-size: 14px;">Đến ngày sự kiện, hãy đăng nhập hệ thống và quét mã QR tại cửa vào để điểm danh.</p>
+            <p style="margin: 0 0 6px; font-size: 17px;"><strong>${escapeHtml(event.name)}</strong></p>
+            <p style="margin: 0 0 4px; color: #6b7b9a;"><strong>Địa điểm:</strong> ${escapeHtml(event.location)}</p>
+            ${when ? `<p style="margin: 0; color: #6b7b9a;"><strong>Thời gian:</strong> ${escapeHtml(when)}</p>` : ''}
+          </div>
+          <p style="color: #6b7b9a; font-size: 14px;">Bạn không cần tài khoản. Đến ngày sự kiện, hãy quét mã QR tại cửa vào và nhập email này để nhận mã xác minh điểm danh.</p>
         </div>
       </div>
     `,
@@ -260,7 +221,7 @@ async function sendCheckinOtpEmail(email, name, otp, event) {
   });
 }
 
-async function sendEventReminderEmail(email, name, event, { leadText, note, loginUrl } = {}) {
+async function sendEventReminderEmail(email, name, event, { leadText, note } = {}) {
   assertConfigured();
 
   const when = event.checkinOpen
@@ -272,11 +233,6 @@ async function sendEventReminderEmail(email, name, event, { leadText, note, logi
             <p style="margin: 0 0 4px; color: #6b7b9a; font-size: 13px;">Lời nhắn từ Ban tổ chức:</p>
             <p style="margin: 0; color: #0d1b2e; white-space: pre-line;">${escapeHtml(note)}</p>
           </div>`
-    : '';
-  const loginBlock = loginUrl
-    ? `<p style="text-align: center; margin: 28px 0 8px;">
-            <a href="${escapeHtml(loginUrl)}" style="background: #1A6BFF; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; display: inline-block;">Đăng nhập trước</a>
-          </p>`
     : '';
 
   await brevoRequest({
@@ -296,8 +252,7 @@ async function sendEventReminderEmail(email, name, event, { leadText, note, logi
             <p style="margin: 0 0 4px; color: #6b7b9a;"><strong>Địa điểm:</strong> ${escapeHtml(event.location)}</p>
             ${when ? `<p style="margin: 0; color: #6b7b9a;"><strong>Thời gian:</strong> ${escapeHtml(when)}</p>` : ''}
           </div>${noteBlock}
-          <p style="color: #6b7b9a; font-size: 14px;">Hãy đăng nhập sẵn trên điện thoại để quét mã QR điểm danh nhanh hơn khi tới nơi.</p>
-          ${loginBlock}
+          <p style="color: #6b7b9a; font-size: 14px;">Bạn không cần tài khoản: tới nơi hãy quét mã QR tại cửa vào và nhập email này để nhận mã xác minh điểm danh.</p>
         </div>
       </div>
     `,
@@ -388,7 +343,6 @@ module.exports = {
   sendCertificateEmail,
   sendEventReminderEmail,
   sendOtpEmail,
-  sendLoginOtpEmail,
   sendCheckinOtpEmail,
   sendWelcomeEmail,
   sendPasswordResetEmail,

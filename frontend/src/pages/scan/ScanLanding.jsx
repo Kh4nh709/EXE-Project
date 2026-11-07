@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   ArrowDown, ArrowLeft, CircleCheck, CircleX, Clock, LoaderCircle, Lock, Mail, MapPin, MapPinOff, RotateCw,
   ShieldCheck, Smartphone, Wifi,
@@ -134,7 +134,6 @@ function ResultCard({ icon: Icon, tone, title, sub, spin = false, children }) {
 
 export default function ScanLanding() {
   const [params] = useSearchParams();
-  const navigate = useNavigate();
   const { user, loading: authLoading } = useAuth();
 
   const eventId = params.get('e');
@@ -206,9 +205,9 @@ export default function ScanLanding() {
       return;
     }
 
-    // Chưa đăng nhập: đã xác minh email cho sự kiện này trên máy này (vd. lúc
-    // check-in) thì dùng luôn thẻ; chưa thì hỏi email ngay tại đây thay vì đẩy
-    // sang trang đăng nhập.
+    // Người tham gia không có tài khoản: đã xác minh email cho sự kiện này trên máy
+    // này (vd. lúc check-in) thì dùng luôn thẻ; chưa thì hỏi email ngay tại đây.
+    // (Nhánh `user` ở trên chỉ còn cho nhân sự đi dự sự kiện.)
     const saved = readStoredPass(eventId);
     if (saved) {
       setPassInfo(saved);
@@ -216,12 +215,6 @@ export default function ScanLanding() {
       return;
     }
     setStage(STAGES.EMAIL);
-  };
-
-  // Vẫn giữ lối đăng nhập bằng mật khẩu. Vé đã nằm trong sessionStorage nên quay
-  // lại đây vẫn dùng được dù token trên URL lúc đó đã hết hạn.
-  const goLogin = () => {
-    navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
   };
 
   const showError = (errData) => {
@@ -266,8 +259,6 @@ export default function ScanLanding() {
         setMaskedEmail(errData.maskedEmail);
         startResendTimer(errData.retryAfter);
         setStage(STAGES.OTP);
-      } else if (errData?.error === 'OTP_CHECKIN_DISABLED') {
-        goLogin();
       } else if (!errData?.error || INLINE_REQUEST_ERRORS.has(errData.error)) {
         setFormError(errData?.message || 'Không gửi được mã. Vui lòng thử lại.');
       } else {
@@ -363,6 +354,7 @@ export default function ScanLanding() {
       DEVICE_USED_BY_OTHER: 'Thiết bị đã dùng cho người khác',
       NOT_REGISTERED: 'Chưa đăng ký tham gia',
       EVENT_NOT_FOUND: 'Không tìm thấy sự kiện',
+      OTP_CHECKIN_DISABLED: 'Không check-in bằng email được',
     };
     return map[code] || 'Không thể check-in';
   };
@@ -425,7 +417,6 @@ export default function ScanLanding() {
                 )}
               </Field>
               <Button type="submit" variant="primary" size="auth" loading={busy} className="w-full">Gửi mã xác minh</Button>
-              <Button variant="ghost" size="auth" icon={Lock} onClick={goLogin} className="w-full">Đăng nhập bằng mật khẩu</Button>
             </form>
           </section>
         )}

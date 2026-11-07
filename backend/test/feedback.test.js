@@ -13,7 +13,9 @@ const USERS = {
   'btc-1': { id: 'btc-1', mssv: null, email: 'btc@f.c', name: 'BTC Một', role: 'BTC', isActive: true, isFirstLogin: false },
   'btc-2': { id: 'btc-2', mssv: null, email: 'btc2@f.c', name: 'BTC Hai', role: 'BTC', isActive: true, isFirstLogin: false },
   'admin-1': { id: 'admin-1', mssv: null, email: 'ad@f.c', name: 'Admin', role: 'ADMIN', isActive: true, isFirstLogin: false },
-  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'Sinh Viên', role: 'STUDENT', isActive: true, isFirstLogin: false },
+  // Người tham gia dùng thẻ OTP (test ở checkin-otp.test.js); đường JWT còn cho nhân sự đi dự.
+  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'Sinh Viên', role: 'LECTURER', isActive: true, isFirstLogin: false },
+  'par-1': { id: 'par-1', mssv: 'SE9', email: 'se9@f.c', name: 'Người tham gia', role: 'STUDENT', isActive: true, isFirstLogin: false },
 };
 const auth = (id) => `Bearer ${jwt.sign({ userId: id }, process.env.JWT_SECRET)}`;
 
@@ -101,10 +103,16 @@ test('summarizeResponses: tính trung bình, phân bố và ẩn người gửi 
 
 // ── Mẫu đánh giá ────────────────────────────────────────────────
 
-test('STUDENT không truy cập được thư viện mẫu', async () => {
+test('LECTURER không truy cập được thư viện mẫu', async () => {
   loginAs();
   const res = await request(app).get('/api/feedback/templates').set('Authorization', auth('stu-1'));
   assert.strictEqual(res.status, 403);
+});
+
+test('người tham gia (STUDENT) không còn đăng nhập được — JWT cũ bị từ chối', async () => {
+  loginAs();
+  const res = await request(app).get('/api/feedback/templates').set('Authorization', auth('par-1'));
+  assert.strictEqual(res.status, 401);
 });
 
 test('BTC tạo mẫu: câu hỏi được chuẩn hoá và gắn người tạo', async () => {
@@ -335,20 +343,6 @@ test('GET phiếu của tôi: trả form, phiếu cũ và lý do không gửi đ
 });
 
 // ── Danh sách sự kiện của sinh viên ─────────────────────────────
-
-test('listEvents (STUDENT): kèm trạng thái đánh giá đã phẳng hoá', async () => {
-  loginAs();
-  stubMethod(prisma.event, 'findMany', async () => [
-    { id: 'e1', attendances: [], eventMembers: [], feedbackForm: { isOpen: true, responses: [{ id: 'r' }] } },
-    { id: 'e2', attendances: [], eventMembers: [], feedbackForm: null },
-  ]);
-  stubMethod(prisma.event, 'count', async () => 2);
-  const res = await request(app).get('/api/events').set('Authorization', auth('stu-1'));
-  assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(res.body.data[0].feedback, { isOpen: true, submitted: true });
-  assert.strictEqual(res.body.data[1].feedback, null);
-  assert.strictEqual(res.body.data[0].feedbackForm, undefined);
-});
 
 // ── Hiện form ngay sau khi quét mã check-out ────────────────────
 

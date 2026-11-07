@@ -8,7 +8,9 @@ const app = require('../src/app');
 const { stubMethod, restoreStubs } = require('../testenv');
 
 const token = jwt.sign({ userId: 'student-1' }, process.env.JWT_SECRET);
-const AUTH_USER = { id: 'student-1', mssv: 'SE1', email: 'a@b.c', name: 'An', role: 'STUDENT', isActive: true, isFirstLogin: false };
+// Người tham gia không đăng nhập (2026-11-07) — đường JWT chỉ còn cho nhân sự đi dự sự kiện;
+// luật cổng/GPS/danh sách dùng chung lib/selfCheckin với đường thẻ OTP.
+const AUTH_USER = { id: 'student-1', mssv: 'SE1', email: 'a@b.c', name: 'An', role: 'LECTURER', isActive: true, isFirstLogin: false };
 
 function mockEvent(overrides = {}) {
   const base = {

@@ -24,7 +24,8 @@ const { stubMethod, restoreStubs } = require('../testenv');
 const USERS = {
   'btc-1': { id: 'btc-1', mssv: null, email: 'btc@f.c', name: 'Trần BTC', role: 'BTC', isActive: true, isFirstLogin: false },
   'btc-2': { id: 'btc-2', mssv: null, email: 'btc2@f.c', name: 'BTC 2', role: 'BTC', isActive: true, isFirstLogin: false },
-  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'An', role: 'STUDENT', isActive: true, isFirstLogin: false },
+  // Người tham gia không đăng nhập (2026-11-07): người dùng không phải BTC giờ là nhân sự khác.
+  'stu-1': { id: 'stu-1', mssv: 'SE1', email: 'se1@f.c', name: 'An', role: 'LECTURER', isActive: true, isFirstLogin: false },
 };
 const auth = (id) => `Bearer ${jwt.sign({ userId: id }, process.env.JWT_SECRET)}`;
 const loginAs = () => stubMethod(prisma.user, 'findUnique', async ({ where }) => USERS[where.id] || null);
@@ -203,14 +204,6 @@ test('chức năng của kiểu tự quét bị chặn trên sự kiện thiệp
   });
   assert.strictEqual(self.status, 400);
   assert.strictEqual(self.body.error, 'INVITATION_EVENT');
-});
-
-test('sinh viên không thấy sự kiện thiệp mời trong danh sách', async () => {
-  loginAs();
-  const findMany = stubMethod(prisma.event, 'findMany', async () => []);
-  stubMethod(prisma.event, 'count', async () => 0);
-  await request(app).get('/api/events').set('Authorization', auth('stu-1'));
-  assert.strictEqual(findMany.calls[0][0].where.kind, 'STANDARD');
 });
 
 // ── Quyền ───────────────────────────────────────────────────────

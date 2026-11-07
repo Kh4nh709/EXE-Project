@@ -28,10 +28,10 @@ afterEach(() => restoreStubs());
 
 // ── Quyền truy cập ─────────────────────────────────────────────
 
-test('sinh viên không truy cập được API quản lý lớp', async () => {
+test('người tham gia (không có tài khoản) không vào được API quản lý lớp', async () => {
   mockAuth();
   const res = await request(app).get('/api/classes').set('Authorization', `Bearer ${studentToken}`);
-  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.status, 401);
 });
 
 test('chưa đăng nhập bị chặn 401', async () => {
@@ -44,11 +44,8 @@ test('chưa đăng nhập bị chặn 401', async () => {
 test('danh sách lớp kèm sĩ số hiện tại', async () => {
   mockAuth();
   stubMethod(prisma.class, 'findMany', async () => [
-    { id: 'cls-1', name: 'SE1701', description: null, isActive: true, createdBy: { name: 'BTC Một' } },
-    { id: 'cls-2', name: 'SE1702', description: null, isActive: true, createdBy: { name: 'BTC Một' } },
-  ]);
-  stubMethod(prisma.user, 'groupBy', async () => [
-    { class: 'SE1701', _count: { _all: 30 } },
+    { id: 'cls-1', name: 'SE1701', description: null, isActive: true, createdBy: { name: 'BTC Một' }, _count: { members: 30 } },
+    { id: 'cls-2', name: 'SE1702', description: null, isActive: true, createdBy: { name: 'BTC Một' }, _count: { members: 0 } },
   ]);
 
   const res = await request(app).get('/api/classes').set('Authorization', `Bearer ${btcToken}`);
@@ -95,14 +92,13 @@ test('tạo lớp trùng tên trả 400', async () => {
   assert.strictEqual(create.calls.length, 0);
 });
 
-test('đổi tên lớp lan sang mọi User.class đang mang tên cũ', async () => {
+test('đổi tên lớp chỉ đổi bản ghi lớp — danh sách lớp gắn theo id nên không phải sửa gì thêm', async () => {
   mockAuth();
   mockClass();
   stubMethod(prisma.class, 'findFirst', async () => null);
   const update = stubMethod(prisma.class, 'update', async ({ data }) => ({ ...CLASS, ...data }));
-  const userUpdateMany = stubMethod(prisma.user, 'updateMany', async () => ({ count: 30 }));
-  stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
-  stubMethod(prisma.user, 'count', async () => 30);
+  const userUpdateMany = stubMethod(prisma.user, 'updateMany', async () => { throw new Error('không được gọi'); });
+  stubMethod(prisma.classMember, 'count', async () => 30);
 
   const res = await request(app).put('/api/classes/cls-1')
     .set('Authorization', `Bearer ${btcToken}`)
@@ -110,10 +106,8 @@ test('đổi tên lớp lan sang mọi User.class đang mang tên cũ', async ()
 
   assert.strictEqual(res.status, 200);
   assert.strictEqual(update.calls[0][0].data.name, 'SE1701-Renamed');
-  assert.deepStrictEqual(userUpdateMany.calls[0][0], {
-    where: { class: 'SE1701' },
-    data: { class: 'SE1701-Renamed' },
-  });
+  assert.strictEqual(res.body.data.memberCount, 30);
+  assert.strictEqual(userUpdateMany.calls.length, 0);
 });
 
 test('đổi tên lớp trùng với lớp khác bị chặn, không đổi gì', async () => {
@@ -130,45 +124,15 @@ test('đổi tên lớp trùng với lớp khác bị chặn, không đổi gì'
   assert.strictEqual(update.calls.length, 0);
 });
 
-test('không đổi tên thì không đụng tới User.class', async () => {
+test('xoá lớp xoá luôn danh sách lớp (cascade), không cần dọn trước', async () => {
   mockAuth();
   mockClass();
-  const update = stubMethod(prisma.class, 'update', async ({ data }) => ({ ...CLASS, ...data }));
-  const userUpdateMany = stubMethod(prisma.user, 'updateMany', async () => { throw new Error('không được gọi'); });
-  stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
-  stubMethod(prisma.user, 'count', async () => 10);
-
-  const res = await request(app).put('/api/classes/cls-1')
-    .set('Authorization', `Bearer ${btcToken}`)
-    .send({ description: 'Mô tả mới' });
-
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(update.calls[0][0].data.description, 'Mô tả mới');
-  assert.strictEqual(userUpdateMany.calls.length, 0);
-});
-
-test('xoá lớp còn thành viên bị chặn 400', async () => {
-  mockAuth();
-  mockClass();
-  stubMethod(prisma.user, 'count', async () => 5);
-  const del = stubMethod(prisma.class, 'delete', async () => { throw new Error('không được gọi'); });
-
-  const res = await request(app).delete('/api/classes/cls-1').set('Authorization', `Bearer ${btcToken}`);
-
-  assert.strictEqual(res.status, 400);
-  assert.strictEqual(del.calls.length, 0);
-});
-
-test('xoá lớp rỗng thành công', async () => {
-  mockAuth();
-  mockClass();
-  stubMethod(prisma.user, 'count', async () => 0);
   const del = stubMethod(prisma.class, 'delete', async () => ({}));
 
   const res = await request(app).delete('/api/classes/cls-1').set('Authorization', `Bearer ${btcToken}`);
 
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(del.calls.length, 1);
+  assert.deepStrictEqual(del.calls[0][0], { where: { id: 'cls-1' } });
 });
 
 test('thao tác trên lớp không tồn tại trả 404', async () => {
@@ -185,91 +149,70 @@ test('thao tác trên lớp không tồn tại trả 404', async () => {
   }
 });
 
-// ── Bulk thành viên ────────────────────────────────────────────
+// ── Danh sách lớp (người tham gia không có tài khoản) ──────────
 
-test('gán nhiều người vào lớp cùng lúc (thêm mới hoặc chuyển từ lớp khác)', async () => {
+test('nhập người vào lớp bằng email + họ tên: tạo người còn thiếu, thêm vào ClassMember', async () => {
   mockAuth();
   mockClass();
-  const updateMany = stubMethod(prisma.user, 'updateMany', async () => ({ count: 3 }));
+  const created = [];
+  stubMethod(prisma.user, 'findMany', async ({ where }) => (where.OR
+    ? [{ id: 'u-old', email: 'cu@fpt.edu.vn', mssv: 'SE1', phone: null, isActive: true }]
+    : created));
+  const createUsers = stubMethod(prisma.user, 'createMany', async ({ data }) => {
+    data.forEach((d) => created.push({ id: 'u-new', ...d }));
+    return { count: data.length };
+  });
+  const members = stubMethod(prisma.classMember, 'createMany', async ({ data }) => ({ count: data.length }));
 
   const res = await request(app).post('/api/classes/cls-1/members')
     .set('Authorization', `Bearer ${btcToken}`)
-    .send({ userIds: ['u1', 'u2', 'u3', 'u1'] });
+    .send({ participants: [
+      { email: 'cu@fpt.edu.vn', name: 'Người Cũ' },
+      { email: 'Moi@FPT.edu.vn', name: 'Người Mới', mssv: 'se2' },
+      { email: 'sai-email', name: 'Lỗi' },
+    ] });
 
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.updated, 3);
-  assert.deepStrictEqual(updateMany.calls[0][0], {
-    where: { id: { in: ['u1', 'u2', 'u3'] } },
-    data: { class: 'SE1701' },
-  });
+  assert.strictEqual(createUsers.calls[0][0].data.length, 1);
+  assert.strictEqual(createUsers.calls[0][0].data[0].email, 'moi@fpt.edu.vn');
+  assert.deepStrictEqual(members.calls[0][0].data, [
+    { classId: 'cls-1', userId: 'u-old' },
+    { classId: 'cls-1', userId: 'u-new' },
+  ]);
+  assert.strictEqual(res.body.added, 2);
+  assert.strictEqual(res.body.skipped.length, 1);
+  assert.strictEqual(res.body.skipped[0].reason, 'Email không hợp lệ');
 });
 
-test('gán thành viên không chọn ai trả 400', async () => {
+test('nhập danh sách rỗng trả 400', async () => {
   mockAuth();
   mockClass();
-  const updateMany = stubMethod(prisma.user, 'updateMany', async () => { throw new Error('không được gọi'); });
+  const members = stubMethod(prisma.classMember, 'createMany', async () => { throw new Error('không được gọi'); });
 
   const res = await request(app).post('/api/classes/cls-1/members')
-    .set('Authorization', `Bearer ${btcToken}`).send({ userIds: [] });
+    .set('Authorization', `Bearer ${btcToken}`).send({ participants: [] });
 
   assert.strictEqual(res.status, 400);
-  assert.strictEqual(updateMany.calls.length, 0);
+  assert.strictEqual(members.calls.length, 0);
 });
 
-test('gỡ thành viên chỉ tác động người đang đúng lớp này', async () => {
+test('gỡ khỏi danh sách lớp chỉ xoá ClassMember của đúng lớp này', async () => {
   mockAuth();
   mockClass();
-  const updateMany = stubMethod(prisma.user, 'updateMany', async () => ({ count: 2 }));
+  const deleteMany = stubMethod(prisma.classMember, 'deleteMany', async () => ({ count: 2 }));
 
   const res = await request(app).post('/api/classes/cls-1/members/remove')
     .set('Authorization', `Bearer ${btcToken}`)
     .send({ userIds: ['u1', 'u2'] });
 
   assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(updateMany.calls[0][0], {
-    where: { id: { in: ['u1', 'u2'] }, class: 'SE1701' },
-    data: { class: null },
-  });
+  assert.deepStrictEqual(deleteMany.calls[0][0], { where: { classId: 'cls-1', userId: { in: ['u1', 'u2'] } } });
 });
 
-test('tìm người để thêm loại trừ người đã ở đúng lớp này', async () => {
+test('tìm người trong toàn hệ thống để thêm vào lớp đã bị bỏ (lộ danh sách của BTC khác)', async () => {
   mockAuth();
-  mockClass();
-  const findMany = stubMethod(prisma.user, 'findMany', async () => []);
-
-  await request(app).get('/api/classes/cls-1/members/search?q=an')
-    .set('Authorization', `Bearer ${btcToken}`);
-
-  assert.deepStrictEqual(findMany.calls[0][0].where.class, { not: 'SE1701' });
-});
-
-test('tìm không kèm từ khoá trả rỗng, trừ khi bật unassignedOnly', async () => {
-  mockAuth();
-  mockClass();
-  const findMany = stubMethod(prisma.user, 'findMany', async () => { throw new Error('không được gọi'); });
-
-  const res = await request(app).get('/api/classes/cls-1/members/search')
-    .set('Authorization', `Bearer ${btcToken}`);
-
-  assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(res.body.data, []);
-  assert.strictEqual(findMany.calls.length, 0);
-});
-
-test('unassignedOnly liệt kê người chưa có lớp, kể cả không gõ từ khoá', async () => {
-  mockAuth();
-  mockClass();
-  const findMany = stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }]);
-
-  const res = await request(app).get('/api/classes/cls-1/members/search?unassignedOnly=1')
-    .set('Authorization', `Bearer ${btcToken}`);
-
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.data.length, 1);
-  const where = findMany.calls[0][0].where;
-  assert.strictEqual(where.class, null);
-  assert.strictEqual(where.role, 'STUDENT');
-  assert.ok(!('OR' in where));
+  const res = await request(app).get('/api/classes/cls-1/members/search?q=an').set('Authorization', `Bearer ${btcToken}`);
+  assert.notStrictEqual(res.status, 200);
 });
 
 // ── Buổi điểm danh ─────────────────────────────────────────────
@@ -291,7 +234,7 @@ test('tạo buổi điểm danh: whitelist bắt buộc bật, không mở đăn
   mockAuth();
   mockClass();
   const create = stubMethod(prisma.event, 'create', async ({ data }) => ({ id: 'evt-1', ...data }));
-  stubMethod(prisma.user, 'findMany', async () => [{ id: 'u1' }, { id: 'u2' }]);
+  stubMethod(prisma.classMember, 'findMany', async () => [{ userId: 'u1' }, { userId: 'u2' }]);
   const members = stubMethod(prisma.eventMember, 'createMany', async () => ({ count: 2 }));
   const attendance = stubMethod(prisma.attendance, 'createMany', async () => ({ count: 2 }));
   stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
@@ -324,7 +267,7 @@ test('tạo buổi điểm danh dùng tên tuỳ chỉnh nếu có', async () =>
   mockAuth();
   mockClass();
   const create = stubMethod(prisma.event, 'create', async ({ data }) => ({ id: 'evt-1', ...data }));
-  stubMethod(prisma.user, 'findMany', async () => []);
+  stubMethod(prisma.classMember, 'findMany', async () => []);
   stubMethod(prisma.eventMember, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma.attendance, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
@@ -341,7 +284,7 @@ test('không đặt khung giờ nào → tự động mở điểm danh ngay khi
   mockAuth();
   mockClass();
   const create = stubMethod(prisma.event, 'create', async ({ data }) => ({ id: 'evt-1', ...data }));
-  stubMethod(prisma.user, 'findMany', async () => []);
+  stubMethod(prisma.classMember, 'findMany', async () => []);
   stubMethod(prisma.eventMember, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma.attendance, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
@@ -364,7 +307,7 @@ test('có đặt khung giờ thì vẫn theo lịch (AUTO), không tự mở', a
   mockAuth();
   mockClass();
   const create = stubMethod(prisma.event, 'create', async ({ data }) => ({ id: 'evt-1', ...data }));
-  stubMethod(prisma.user, 'findMany', async () => []);
+  stubMethod(prisma.classMember, 'findMany', async () => []);
   stubMethod(prisma.eventMember, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma.attendance, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));
@@ -381,7 +324,7 @@ test('BTC truyền checkinState rõ ràng thì ưu tiên hơn suy luận mặc �
   mockAuth();
   mockClass();
   const create = stubMethod(prisma.event, 'create', async ({ data }) => ({ id: 'evt-1', ...data }));
-  stubMethod(prisma.user, 'findMany', async () => []);
+  stubMethod(prisma.classMember, 'findMany', async () => []);
   stubMethod(prisma.eventMember, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma.attendance, 'createMany', async () => ({ count: 0 }));
   stubMethod(prisma, '$transaction', async (ops) => Promise.all(ops));

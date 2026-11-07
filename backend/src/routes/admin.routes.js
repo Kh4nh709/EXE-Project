@@ -1,22 +1,18 @@
 const router = require('express').Router();
-const multer = require('multer');
 const { authenticate, authorize } = require('../middleware/auth');
 const {
-  listUsers, createUser, updateUser, deleteUser, resetPassword, resetDeviceBinding, importStudents, getStats,
+  listUsers, createUser, updateUser, deleteUser, resetPassword, resetDeviceBinding, getStats,
   bulkUpdateUsers, bulkResetPasswords, bulkResetDevices, bulkDeleteUsers,
 } = require('../controllers/admin.controller');
 const {
   importFaceProfiles, getUserFaceProfile, setUserFaceProfile, deleteUserFaceProfile,
 } = require('../controllers/face.controller');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-
 router.use(authenticate, authorize('ADMIN'));
 
 router.get('/stats', getStats);
 router.get('/users', listUsers);
 router.post('/users', createUser);
-router.post('/users/import', upload.single('file'), importStudents);
 // Ảnh thẻ theo MSSV: trình duyệt admin tính embedding, chỉ gửi vector + thumbnail lên.
 router.post('/face-profiles/import', importFaceProfiles);
 
