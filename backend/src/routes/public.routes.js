@@ -22,6 +22,7 @@ const {
   publicScannerSummary, publicScan, publicSearchGuests, publicCheckInGuest, publicWalkIn,
   getPublicInvitation, getPublicInvitationPdf,
 } = require('../controllers/invitation.controller');
+const { call } = require('../controllers/call.controller');
 
 // Endpoint đăng ký công khai có thể tạo tài khoản mới → siết chặt hơn rate limit
 // chung của /api để chặn spam tạo user hàng loạt từ một IP.
@@ -114,5 +115,6 @@ const publicCheckinLimiter = rateLimit({
 });
 router.get('/checkin/:eventId', getPublicCheckinPage);
 router.post('/checkin/:eventId', publicCheckinLimiter, submitPublicCheckin);
+router.get('/call', call);
 
 module.exports = router;

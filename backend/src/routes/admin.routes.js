@@ -7,9 +7,12 @@ const {
 const {
   importFaceProfiles, getUserFaceProfile, setUserFaceProfile, deleteUserFaceProfile,
 } = require('../controllers/face.controller');
+// Giám sát server không cần SSH — chỉ đọc chỉ số cố định, không chạy lệnh system.
+const { getServerStats } = require('../controllers/serverStats.controller');
 
 router.use(authenticate, authorize('ADMIN'));
 
+router.get('/server-stats', getServerStats);
 router.get('/stats', getStats);
 router.get('/users', listUsers);
 router.post('/users', createUser);
